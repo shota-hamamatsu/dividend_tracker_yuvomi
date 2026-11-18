@@ -2,9 +2,10 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import {
     type DividendRecord,
+    type PaymentInput,
     type RecordInput,
-    calcAmount,
-    parsePerShare,
+    MAX_PAYMENTS,
+    buildPayments,
     parseShares,
     validateInput,
 } from '../src/logic.ts';
@@ -83,20 +84,37 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
     }
 }
 
+const BAD_REQUEST = 'データの形式が正しくありません';
+
+function toPayments(value: unknown): PaymentInput[] {
+    if (!Array.isArray(value)) throw new HttpError(400, 'bad_request', BAD_REQUEST);
+    // 件数超過は要素を調べる前に validateInput のメッセージで返す
+    if (value.length > MAX_PAYMENTS) return value as PaymentInput[];
+    return value.map((item: unknown) => {
+        const p = (typeof item === 'object' && item !== null ? item : {}) as Record<
+            string,
+            unknown
+        >;
+        const { payDate, perShareText } = p;
+        if (typeof payDate !== 'string' || typeof perShareText !== 'string') {
+            throw new HttpError(400, 'bad_request', BAD_REQUEST);
+        }
+        return { payDate, perShareText };
+    });
+}
+
 function toInput(body: unknown): RecordInput {
     const b = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>;
-    const { ownerId, ticker, name, payDate, sharesText, perShareText } = b;
+    const { ownerId, ticker, name, sharesText } = b;
     if (
         typeof ownerId !== 'number' ||
         typeof ticker !== 'string' ||
         typeof name !== 'string' ||
-        typeof payDate !== 'string' ||
-        typeof sharesText !== 'string' ||
-        typeof perShareText !== 'string'
+        typeof sharesText !== 'string'
     ) {
-        throw new HttpError(400, 'bad_request', 'データの形式が正しくありません');
+        throw new HttpError(400, 'bad_request', BAD_REQUEST);
     }
-    return { ownerId, ticker, name, payDate, sharesText, perShareText };
+    return { ownerId, ticker, name, sharesText, payments: toPayments(b['payments']) };
 }
 
 export function createHandler(deps: Deps) {
@@ -154,9 +172,8 @@ export function createHandler(deps: Deps) {
         );
     };
 
-    const addRecord = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-        const { me, cookie } = await authenticate(req);
-        checkWrite(req, me, cookie);
+    /** 本文を読み、検証と家族チェックを済ませた入力を返す（POST / PUT 共通）。 */
+    const readValidInput = async (req: IncomingMessage, cookie: string): Promise<RecordInput> => {
         const input = toInput(await readJson(req));
         const error = validateInput(input);
         if (error !== null) throw new HttpError(400, 'invalid', error);
@@ -173,24 +190,35 @@ export function createHandler(deps: Deps) {
         if (!members.has(input.ownerId)) {
             throw new HttpError(400, 'unknown_owner', '保有者が家族にいません');
         }
-        if (!me.isAdmin && input.ownerId !== me.id) {
-            throw new HttpError(403, 'not_owner', '自分以外の記録は管理者だけが追加できます');
-        }
+        return input;
+    };
 
-        // validateInput を通っているので null にはならない
+    /** 入力から保存用の項目を作る。validateInput を通っているので parse は null にならない。 */
+    const fields = (input: RecordInput) => {
         const shares = parseShares(input.sharesText) as number;
-        const perShareCents = parsePerShare(input.perShareText) as number;
-        const record: DividendRecord = {
-            id: randomUUID(),
+        return {
             ownerId: input.ownerId,
             ticker: input.ticker.trim(),
             name: input.name.trim(),
-            payDate: input.payDate,
             shares,
-            perShareCents,
-            amount: calcAmount(shares, perShareCents),
+            payments: buildPayments(shares, input.payments),
+        };
+    };
+
+    const addRecord = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+        const { me, cookie } = await authenticate(req);
+        checkWrite(req, me, cookie);
+        const input = await readValidInput(req, cookie);
+        if (!me.isAdmin && input.ownerId !== me.id) {
+            throw new HttpError(403, 'not_owner', '自分以外の記録は管理者だけが追加できます');
+        }
+        const now = new Date().toISOString();
+        const record: DividendRecord = {
+            id: randomUUID(),
+            ...fields(input),
             createdBy: me.id,
-            createdAt: new Date().toISOString(),
+            createdAt: now,
+            updatedAt: now,
         };
         try {
             await deps.store.add(record);
@@ -198,6 +226,40 @@ export function createHandler(deps: Deps) {
             throw new HttpError(500, 'save_failed', '保存できませんでした');
         }
         send(res, 201, { data: record });
+    };
+
+    const updateRecord = async (
+        req: IncomingMessage,
+        res: ServerResponse,
+        id: string,
+    ): Promise<void> => {
+        const { me, cookie } = await authenticate(req);
+        checkWrite(req, me, cookie);
+        const input = await readValidInput(req, cookie);
+        const current = deps.store.get(id);
+        if (!current) throw new HttpError(404, 'not_found', '記録が見つかりません');
+        if (!me.isAdmin && current.ownerId !== me.id) {
+            throw new HttpError(403, 'not_owner', '自分以外の記録は管理者だけが編集できます');
+        }
+        if (!me.isAdmin && input.ownerId !== me.id) {
+            throw new HttpError(403, 'not_owner', '自分以外の記録は管理者だけが追加できます');
+        }
+        const record: DividendRecord = {
+            id: current.id,
+            ...fields(input),
+            createdBy: current.createdBy,
+            createdAt: current.createdAt,
+            updatedAt: new Date().toISOString(),
+        };
+        let updated: boolean;
+        try {
+            updated = await deps.store.update(record);
+        } catch {
+            throw new HttpError(500, 'save_failed', '保存できませんでした');
+        }
+        // 本文を読んでいる間に削除された場合
+        if (!updated) throw new HttpError(404, 'not_found', '記録が見つかりません');
+        send(res, 200, { data: record });
     };
 
     const deleteRecord = async (
@@ -240,10 +302,10 @@ export function createHandler(deps: Deps) {
                 path.startsWith(PREFIX) ? path.slice(PREFIX.length) : '',
             );
             if (match?.[1]) {
-                if (method !== 'DELETE') {
-                    throw new HttpError(405, 'method', '許可されていない操作です');
-                }
-                return await deleteRecord(req, res, decodeURIComponent(match[1]));
+                const id = decodeURIComponent(match[1]);
+                if (method === 'PUT') return await updateRecord(req, res, id);
+                if (method === 'DELETE') return await deleteRecord(req, res, id);
+                throw new HttpError(405, 'method', '許可されていない操作です');
             }
             throw new HttpError(404, 'not_found', '見つかりません');
         } catch (err) {

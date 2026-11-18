@@ -71,3 +71,256 @@
   font-size: var(--type-caption, 0.8125rem);
   color: var(--color-danger-ink, #b80012);
 }
+
+/* 銘柄一覧 */
+.dt-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3, 0.75rem);
+  margin-bottom: var(--space-2, 0.5rem);
+}
+
+.dt-heading h2 {
+  margin: 0;
+}
+
+.dt-heading button {
+  min-height: var(--target-base, 44px);
+  padding: var(--space-2, 0.5rem) var(--space-4, 1rem);
+  border: 0;
+  border-radius: var(--radius-full, 9999px);
+  background: var(--color-btn-primary, #6c3aed);
+  color: var(--color-text-on-accent, #fff);
+  font-weight: var(--font-weight-medium, 500);
+  cursor: pointer;
+}
+
+/* 横スクロールは出さない。銘柄・受取日は折り返し、見出しと数値は折り返さない */
+.dt-list {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--color-text-primary);
+}
+
+.dt-list th,
+.dt-list td {
+  padding: var(--space-2, 0.5rem) var(--space-3, 0.75rem);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-text-secondary, #5b6270) 25%, transparent);
+  text-align: left;
+}
+
+.dt-list th,
+.dt-list .dt-num,
+.dt-list .dt-owner {
+  white-space: nowrap;
+}
+
+.dt-list th {
+  font-size: var(--type-caption, 0.8125rem);
+  font-weight: var(--font-weight-medium, 500);
+  color: var(--color-text-secondary);
+}
+
+.dt-list .dt-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.dt-row--editable {
+  cursor: pointer;
+}
+
+.dt-row--editable:hover,
+.dt-row--editable:focus-visible {
+  background: color-mix(in srgb, var(--color-btn-primary, #6c3aed) 8%, transparent);
+  outline: none;
+}
+
+/* ダイアログ */
+.dt-dialog {
+  box-sizing: border-box;
+  width: calc(100% - 2 * var(--space-4, 1rem));
+  max-width: 32rem;
+  max-height: calc(100% - 2 * var(--space-4, 1rem));
+  padding: var(--space-5, 1.25rem);
+  border: 0;
+  border-radius: 0.75rem;
+  background: var(--color-bg, #fff);
+  color: var(--color-text-primary);
+}
+
+.dt-dialog::backdrop {
+  background: rgb(0 0 0 / 0.4);
+}
+
+.dt-dialog h2 {
+  margin: 0 0 var(--space-3, 0.75rem);
+}
+
+.dt-dialog .dt-payments,
+.dt-dialog .dt-error,
+.dt-dialog .dt-actions {
+  grid-column: 1 / -1;
+}
+
+.dt-payments {
+  display: grid;
+  gap: var(--space-2, 0.5rem);
+  min-width: 0;
+  margin: 0;
+  padding: var(--space-3, 0.75rem);
+  border: 1px solid color-mix(in srgb, var(--color-text-secondary, #5b6270) 30%, transparent);
+  border-radius: 0.5rem;
+}
+
+.dt-payments legend {
+  padding: 0 var(--space-1, 0.25rem);
+  font-size: var(--type-caption, 0.8125rem);
+  color: var(--color-text-secondary);
+}
+
+.dt-payment {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto;
+  gap: var(--space-2, 0.5rem);
+  align-items: end;
+}
+
+.dt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2, 0.5rem);
+}
+
+.dt-form .dt-button--secondary {
+  border: 1px solid color-mix(in srgb, var(--color-text-secondary, #5b6270) 50%, transparent);
+  background: transparent;
+  color: var(--color-text-primary);
+}
+
+/* 狭い画面では受取日を 1 行使い、1株配当と削除を次の行に並べる */
+@media (max-width: 30rem) {
+  .dt-payment {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .dt-payment > label:first-child {
+    grid-column: 1 / -1;
+  }
+}
+
+/* 月別配当額 */
+.dt-chart {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: var(--space-1, 0.25rem);
+  align-items: stretch;
+  height: 12rem;
+  margin: var(--space-2, 0.5rem) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dt-chart__month {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.dt-chart__track {
+  display: flex;
+  flex: 1;
+  align-items: flex-end;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-text-secondary, #5b6270) 40%, transparent);
+}
+
+.dt-chart__bar {
+  width: 100%;
+  border-radius: 0.25rem 0.25rem 0 0;
+  background: var(--color-btn-primary, #6c3aed);
+}
+
+.dt-chart__value,
+.dt-chart__label {
+  overflow: hidden;
+  font-size: var(--type-caption, 0.8125rem);
+  text-align: center;
+  white-space: nowrap;
+}
+
+.dt-chart__value {
+  min-height: 1.25rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
+}
+
+.dt-chart__label {
+  padding-top: var(--space-1, 0.25rem);
+  color: var(--color-text-secondary);
+}
+
+@media (max-width: 40rem) {
+  .dt-chart__value {
+    display: none;
+  }
+}
+
+/* ダイアログの入力欄: 1 段目 保有者 / 2 段目 銘柄コード・銘柄名 / 3 段目 保有株数 */
+.dt-dialog .dt-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dt-dialog .dt-field--wide {
+  grid-column: 1 / -1;
+}
+
+.dt-dialog .dt-field--shares {
+  grid-column: 1;
+}
+
+/* 銘柄一覧の削除ボタン */
+.dt-list .dt-delete-cell {
+  width: 1%;
+  padding-right: 0;
+}
+
+.dt-button--danger {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full, 9999px);
+  background: transparent;
+  color: var(--color-danger-ink, #b80012);
+  font-size: 1.75rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.dt-button--danger:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+@media (max-width: 30rem) {
+  .dt-list th,
+  .dt-list td {
+    padding-right: var(--space-1, 0.25rem);
+    padding-left: var(--space-1, 0.25rem);
+  }
+
+  .dt-list td {
+    font-size: 0.875rem;
+  }
+
+  .dt-list th {
+    white-space: normal;
+  }
+
+  .dt-list .dt-delete-cell {
+    padding-left: 0;
+  }
+}

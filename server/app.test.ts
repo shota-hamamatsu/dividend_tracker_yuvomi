@@ -30,12 +30,11 @@ function existing(id: string, ownerId: number): DividendRecord {
         ownerId,
         ticker: '7203',
         name: 'トヨタ',
-        payDate: '2025-03-31',
         shares: 100,
-        perShareCents: 4500,
-        amount: 4500,
+        payments: [{ payDate: '2025-03-31', perShareCents: 4500, amount: 4500 }],
         createdBy: ownerId,
         createdAt: '2025-04-01T00:00:00.000Z',
+        updatedAt: '2025-04-01T00:00:00.000Z',
     };
 }
 
@@ -64,7 +63,7 @@ function reset(): void {
 }
 
 function write(
-    method: 'POST' | 'DELETE',
+    method: 'POST' | 'PUT' | 'DELETE',
     path: string,
     user: string,
     body?: unknown,
@@ -86,9 +85,11 @@ const input = {
     ownerId: 2,
     ticker: ' 8306 ',
     name: ' 三菱UFJ ',
-    payDate: '2025-06-30',
     sharesText: '3',
-    perShareText: '37.5',
+    payments: [
+        { payDate: '2025-12-01', perShareText: '40', amount: 999999 }, // amount は無視されるべき
+        { payDate: '2025-06-30', perShareText: '37.5' },
+    ],
     amount: 999999, // 無視されるべき
 };
 
@@ -145,12 +146,33 @@ test('POST requires same origin, CSRF and write access', async () => {
 
 test('POST validates input and owner', async () => {
     reset();
-    const bad = await write('POST', '/records', 'alice', { ...input, perShareText: '1.234' });
+    const bad = await write('POST', '/records', 'alice', {
+        ...input,
+        payments: [{ payDate: '2025-06-30', perShareText: '1.234' }],
+    });
     assert.equal(bad.status, 400);
     assert.equal(
         ((await bad.json()) as { error: string }).error,
         '1株当たり配当は0以上、小数第2位までで入力してください',
     );
+    const dup = await write('POST', '/records', 'alice', {
+        ...input,
+        payments: [input.payments[1], input.payments[1]],
+    });
+    assert.equal(((await dup.json()) as { error: string }).error, '同じ受取日が重複しています');
+    const none = await write('POST', '/records', 'alice', { ...input, payments: [] });
+    assert.equal(
+        ((await none.json()) as { error: string }).error,
+        '受取日を1つ以上入力してください',
+    );
+    for (const payments of [undefined, 'x', [null], [{ payDate: '2025-06-30' }]]) {
+        const res = await write('POST', '/records', 'alice', { ...input, payments });
+        assert.equal(res.status, 400, JSON.stringify(payments));
+        assert.equal(
+            ((await res.json()) as { error: string }).error,
+            'データの形式が正しくありません',
+        );
+    }
     assert.equal(
         (await write('POST', '/records', 'alice', { ...input, ownerId: '2' })).status,
         400,
@@ -180,9 +202,14 @@ test('POST stores a record with a server-computed amount', async () => {
     assert.equal(data.ticker, '8306');
     assert.equal(data.name, '三菱UFJ');
     assert.equal(data.shares, 3);
-    assert.equal(data.perShareCents, 3750);
-    assert.equal(data.amount, 112);
+    // 日付順に並べ、各回の受取額は 1 円未満切り捨て（3 × 37.5 = 112.5 → 112）
+    assert.deepEqual(data.payments, [
+        { payDate: '2025-06-30', perShareCents: 3750, amount: 112 },
+        { payDate: '2025-12-01', perShareCents: 4000, amount: 120 },
+    ]);
     assert.equal(data.createdBy, 2);
+    assert.equal(data.updatedAt, data.createdAt);
+    assert.deepEqual(store.get(data.id), data);
     assert.equal(store.list().length, 3);
 
     // 管理者は他人の分を追加できる
@@ -191,6 +218,48 @@ test('POST stores a record with a server-computed amount', async () => {
     const added = ((await byAdmin.json()) as { data: DividendRecord }).data;
     assert.equal(added.ownerId, 3);
     assert.equal(added.createdBy, 1);
+});
+
+test('PUT edits a record, keeping id and creation info', async () => {
+    reset();
+    const edit = {
+        ...input,
+        sharesText: '200',
+        payments: [{ payDate: '2025-09-30', perShareText: '50' }],
+    };
+    assert.equal((await write('PUT', '/records/r-admin', 'alice', edit)).status, 403);
+    assert.equal(
+        (await write('PUT', '/records/r-alice', 'alice', edit, { csrf: 'b'.repeat(64) })).status,
+        403,
+    );
+    assert.equal((await write('PUT', '/records/r-alice', 'reader', edit)).status, 403);
+    assert.equal((await write('PUT', '/records/missing', 'alice', edit)).status, 404);
+    // 一般ユーザーは保有者を他人に付け替えられない
+    const reassign = await write('PUT', '/records/r-alice', 'alice', { ...edit, ownerId: 1 });
+    assert.equal(reassign.status, 403);
+    const invalid = await write('PUT', '/records/r-alice', 'alice', { ...edit, sharesText: '0' });
+    assert.equal(invalid.status, 400);
+    assert.deepEqual(store.get('r-alice'), existing('r-alice', 2));
+
+    const res = await write('PUT', '/records/r-alice', 'alice', edit);
+    assert.equal(res.status, 200);
+    const { data } = (await res.json()) as { data: DividendRecord };
+    assert.equal(data.id, 'r-alice');
+    assert.equal(data.ticker, '8306');
+    assert.equal(data.shares, 200);
+    assert.deepEqual(data.payments, [
+        { payDate: '2025-09-30', perShareCents: 5000, amount: 10000 },
+    ]);
+    assert.equal(data.createdBy, 2);
+    assert.equal(data.createdAt, '2025-04-01T00:00:00.000Z');
+    assert.notEqual(data.updatedAt, data.createdAt);
+    assert.deepEqual(store.get('r-alice'), data);
+    assert.equal(store.list().length, 2);
+
+    // 管理者は他人の記録を編集でき、保有者も変えられる
+    const byAdmin = await write('PUT', '/records/r-alice', 'admin', { ...edit, ownerId: 3 });
+    assert.equal(byAdmin.status, 200);
+    assert.equal(((await byAdmin.json()) as { data: DividendRecord }).data.ownerId, 3);
 });
 
 test('DELETE enforces ownership unless admin', async () => {
@@ -217,6 +286,11 @@ test('unknown paths and methods', async () => {
         headers: { cookie: 'session=alice' },
     });
     assert.equal(put.status, 405);
+    const post = await fetch(`${base}/records/r-alice`, {
+        method: 'POST',
+        headers: { cookie: 'session=alice' },
+    });
+    assert.equal(post.status, 405);
     const health = await fetch(`${base}/health`);
     assert.equal(health.status, 200);
     assert.deepEqual(await health.json(), { ok: true });

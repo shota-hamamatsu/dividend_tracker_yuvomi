@@ -1,4 +1,4 @@
-# 仕様: 画面確認用の開発ページ（dev/）v0.1
+# 仕様: 画面確認用の開発ページ（dev/）v0.3
 
 `src/index.ts` を yuvomi 本体なしでブラウザ表示し、見た目と挙動を確認するための開発専用ページ。
 本番の成果物（`modules/`、`server/`）には含めない。`npm run dev` で起動する（Vite 開発サーバー）。
@@ -39,7 +39,10 @@ TypeScript（strict）。`enum` / `namespace` / デコレータは使わない�
 - POST: ヘッダー `X-DT-CSRF` が `dev-token` でなければ `403 { error: '画面を再読み込みしてから、もう一度お試しください' }`。`me.canWrite` が false なら `403 { error: '書き込み権限がありません' }`。
   一般ユーザーで `ownerId` が自分以外なら `403 { error: '自分の記録だけ追加できます' }`。
   OK なら、本文に `id`（連番の文字列）を付けた記録を保存して `201 { data: record }`。保存先はメモリ上の配列のみ（再描画・再読み込みで初期データに戻る）。
-- 記録の形は `src/logic.ts` の `DividendRecord` に従う（`import type`）。初期データは 2024 年と 2025 年にまたがる 4 件程度、保有者は 1〜3 に散らす。
+  本文（v0.3 の `RecordInput`）は `validateInput` で検証し、エラーなら `400 { error }`。受取額は `buildPayments` で計算する。
+- PUT `/records/<id>`（v0.2 で追加）: POST と同じ検証のあと、該当なしは `404 { error: '記録が見つかりません' }`、一般ユーザーが他人の記録なら `403`。OK なら `id`・`createdBy`・`createdAt` を残して置き換え、`200 { data: record }`。
+- DELETE `/records/<id>`（v0.3 で追加）: CSRF・`canWrite` の確認は POST と同じ。該当なしは `404 { error: '記録が見つかりません' }`、一般ユーザーが他人の記録なら `403 { error: '自分の記録だけ削除できます' }`。OK なら配列から除いて `200 { data: { id, deleted: true } }`。
+- 記録の形は `src/logic.ts` の `DividendRecord` に従う（`import type`）。初期データは 2024 年と 2025 年にまたがる 4 件程度（受取日を複数持つ記録を含む）、保有者は 1〜3 に散らす。
 - `AbortSignal` が中断済みなら `DOMException('Aborted', 'AbortError')` で reject する。
 
 ## 確認用ページ（`dev/main.ts`）
@@ -57,7 +60,7 @@ TypeScript（strict）。`enum` / `namespace` / デコレータは使わない�
 ## 禁止事項
 
 - `src/`・`modules/`・`server/` を変更しない。
-- 仕様にない機能（記録の削除、永続化、ログイン等）を足さない。
+- 仕様にない機能（永続化、ログイン等）を足さない。
 - 外部 URL・外部ライブラリを使わない（Vite のみ）。
 
 ## 受け入れ条件

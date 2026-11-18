@@ -5,6 +5,9 @@ var MAX_PER_SHARE_CENTS = 1e7;
 function isPositiveInt(value) {
 	return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
+function compareText(a, b) {
+	return a < b ? -1 : a > b ? 1 : 0;
+}
 function groupDigits(digits) {
 	return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
@@ -35,30 +38,74 @@ function isValidDate(text) {
 function validateInput(input) {
 	if (!isPositiveInt(input.ownerId)) return "保有者を選んでください";
 	if (input.ticker.trim() === "") return "銘柄コードを入力してください";
-	if (!isValidDate(input.payDate)) return "受取日を入力してください";
 	if (parseShares(input.sharesText) === null) return "保有株数は1以上の整数で入力してください";
-	if (parsePerShare(input.perShareText) === null) return "1株当たり配当は0以上、小数第2位までで入力してください";
+	if (input.payments.length === 0) return "受取日を1つ以上入力してください";
+	if (input.payments.length > 24) return `受取日は24件までです`;
+	for (const payment of input.payments) {
+		if (!isValidDate(payment.payDate)) return "受取日を入力してください";
+		if (parsePerShare(payment.perShareText) === null) return "1株当たり配当は0以上、小数第2位までで入力してください";
+	}
+	if (new Set(input.payments.map((p) => p.payDate)).size !== input.payments.length) return "同じ受取日が重複しています";
 	return null;
+}
+function isValidShares(value) {
+	return isPositiveInt(value) && value <= MAX_SHARES;
+}
+function isValidPerShareCents(value) {
+	return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= MAX_PER_SHARE_CENTS;
+}
+function isValidPayment(value, shares) {
+	if (typeof value !== "object" || value === null) return false;
+	const p = value;
+	const { perShareCents } = p;
+	return typeof p["payDate"] === "string" && isValidDate(p["payDate"]) && isValidPerShareCents(perShareCents) && p["amount"] === calcAmount(shares, perShareCents);
 }
 function isValidRecord(value) {
 	if (typeof value !== "object" || value === null) return false;
 	const r = value;
-	const { shares, perShareCents } = r;
-	return typeof r["id"] === "string" && isPositiveInt(r["ownerId"]) && typeof r["ticker"] === "string" && r["ticker"] !== "" && typeof r["name"] === "string" && typeof r["payDate"] === "string" && isValidDate(r["payDate"]) && isPositiveInt(shares) && shares <= MAX_SHARES && typeof perShareCents === "number" && Number.isInteger(perShareCents) && perShareCents >= 0 && perShareCents <= MAX_PER_SHARE_CENTS && r["amount"] === calcAmount(shares, perShareCents) && isPositiveInt(r["createdBy"]) && typeof r["createdAt"] === "string";
+	const { shares, payments } = r;
+	if (!isValidShares(shares)) return false;
+	if (!Array.isArray(payments) || payments.length === 0 || payments.length > 24) return false;
+	for (let i = 0; i < payments.length; i++) {
+		const payment = payments[i];
+		if (!isValidPayment(payment, shares)) return false;
+		if (i > 0 && payments[i - 1].payDate >= payment.payDate) return false;
+	}
+	return typeof r["id"] === "string" && isPositiveInt(r["ownerId"]) && typeof r["ticker"] === "string" && r["ticker"] !== "" && typeof r["name"] === "string" && isPositiveInt(r["createdBy"]) && typeof r["createdAt"] === "string" && typeof r["updatedAt"] === "string";
 }
 function filterByOwner(records, ownerId) {
 	return ownerId === null ? [...records] : records.filter((r) => r.ownerId === ownerId);
 }
+function recordTotal(record) {
+	return record.payments.reduce((sum, p) => sum + p.amount, 0);
+}
 function yearlyTotals(records) {
 	const totals = /* @__PURE__ */ new Map();
-	for (const record of records) {
-		const year = record.payDate.substring(0, 4);
-		totals.set(year, (totals.get(year) ?? 0) + record.amount);
+	for (const record of records) for (const payment of record.payments) {
+		const year = payment.payDate.substring(0, 4);
+		totals.set(year, (totals.get(year) ?? 0) + payment.amount);
 	}
 	return Array.from(totals, ([year, total]) => ({
 		year,
 		total
-	})).sort((a, b) => a.year < b.year ? 1 : a.year > b.year ? -1 : 0);
+	})).sort((a, b) => -compareText(a.year, b.year));
+}
+/** 指定した年（'YYYY'）の 1〜12 月それぞれの受取額の合計。 */
+function monthlyTotals(records, year) {
+	const totals = Array.from({ length: 12 }, (_, i) => ({
+		month: i + 1,
+		total: 0
+	}));
+	for (const record of records) for (const payment of record.payments) {
+		if (payment.payDate.substring(0, 4) !== year) continue;
+		const entry = totals[Number(payment.payDate.substring(5, 7)) - 1];
+		if (entry) entry.total += payment.amount;
+	}
+	return totals;
+}
+/** 一覧表示用。ticker → ownerId → id の昇順。 */
+function sortForList(records) {
+	return [...records].sort((a, b) => compareText(a.ticker, b.ticker) || a.ownerId - b.ownerId || compareText(a.id, b.id));
 }
 function formatYen(amount) {
 	return groupDigits(String(amount)) + "円";
@@ -78,10 +125,11 @@ function labeled(text, control) {
 	label.appendChild(control);
 	return label;
 }
-function input(type, name) {
+function input(type, name, value = "") {
 	const node = el("input");
 	node.type = type;
 	node.name = name;
+	node.value = value;
 	return node;
 }
 function option(value, text, selected = false) {
@@ -89,6 +137,31 @@ function option(value, text, selected = false) {
 	node.value = value;
 	node.selected = selected;
 	return node;
+}
+function button(text, action, className) {
+	const node = el("button", className, text);
+	node.type = "button";
+	node.dataset["action"] = action;
+	return node;
+}
+/** 1/100 円単位の整数を入力欄用の文字列に戻す（3750 → '37.5'、5 → '0.05'、1200 → '12'）。 */
+function perShareText(cents) {
+	const yen = String(Math.trunc(cents / 100));
+	const fraction = String(cents % 100).padStart(2, "0").replace(/0+$/, "");
+	return fraction === "" ? yen : `${yen}.${fraction}`;
+}
+/** 受取日の一覧表示。年が 2 種類以上なら年も付ける（'3/31、9/30' / '2024/12/31、2025/6/30'）。 */
+function formatPayDates(payments) {
+	const withYear = new Set(payments.map((p) => p.payDate.substring(0, 4))).size > 1;
+	return payments.map(({ payDate }) => {
+		const [year, month, day] = payDate.split("-");
+		const md = `${Number(month)}/${Number(day)}`;
+		return withYear ? `${year}/${md}` : md;
+	}).join("、");
+}
+/** 一覧・確認文で使う銘柄の表示（'7203 トヨタ自動車'、name が空なら ticker だけ）。 */
+function recordLabel(record) {
+	return record.name === "" ? record.ticker : `${record.ticker} ${record.name}`;
 }
 function parseMembers(body) {
 	const map = /* @__PURE__ */ new Map();
@@ -119,9 +192,12 @@ async function render(container, context) {
 	};
 	let csrfToken = "";
 	let filter = null;
-	let errorEl = el("p", "dt-error");
-	let submitEl = null;
+	let chartYear = null;
+	let listError = "";
+	let dialog = null;
+	let editing = null;
 	const memberName = (id) => members.get(id) ?? UNKNOWN_USER;
+	const canEdit = (record) => me.canWrite && (me.isAdmin || record.ownerId === me.id);
 	const request = (method, url, body) => fetch(url, {
 		method,
 		credentials: "same-origin",
@@ -158,43 +234,171 @@ async function render(container, context) {
 		section.appendChild(ul);
 		return section;
 	};
-	const buildForm = () => {
+	const buildList = (visible) => {
 		const section = el("section", "page-section");
-		section.appendChild(el("h2", void 0, "配当を追加"));
-		errorEl = el("p", "dt-error");
-		submitEl = null;
-		if (!me.canWrite) {
-			section.appendChild(el("p", void 0, "閲覧のみの権限です"));
+		const heading = el("div", "dt-heading");
+		heading.appendChild(el("h2", void 0, "銘柄一覧"));
+		if (me.canWrite) heading.appendChild(button("追加", "add"));
+		section.appendChild(heading);
+		if (!me.canWrite) section.appendChild(el("p", void 0, "閲覧のみの権限です"));
+		section.appendChild(el("p", "dt-error", listError));
+		if (visible.length === 0) {
+			section.appendChild(el("p", void 0, EMPTY_TEXT));
 			return section;
 		}
-		const owner = el("select");
-		owner.name = "ownerId";
-		const choices = me.isAdmin ? [...members.keys()] : [me.id];
-		if (!choices.includes(me.id)) choices.unshift(me.id);
-		for (const id of choices) owner.appendChild(option(String(id), memberName(id), id === me.id));
-		const shares = input("number", "shares");
-		shares.min = "1";
-		shares.step = "1";
-		const perShare = input("text", "perShare");
-		perShare.inputMode = "decimal";
-		const form = el("form", "dt-form");
-		form.append(labeled("保有者", owner), labeled("銘柄コード", input("text", "ticker")), labeled("銘柄名", input("text", "name")), labeled("受取日", input("date", "payDate")), labeled("保有株数", shares), labeled("1株当たり配当（円）", perShare));
-		submitEl = el("button", void 0, "追加");
-		submitEl.type = "submit";
-		form.appendChild(submitEl);
-		section.append(form, errorEl);
+		const table = el("table", "dt-list");
+		const headRow = el("tr");
+		if (me.canWrite) {
+			const th = el("th", "dt-delete-cell");
+			th.setAttribute("aria-label", "削除");
+			headRow.appendChild(th);
+		}
+		for (const [text, className] of [
+			["保有者", void 0],
+			["銘柄", void 0],
+			["保有株数", "dt-num"],
+			["受取日", void 0],
+			["合計", "dt-num"]
+		]) headRow.appendChild(el("th", className, text));
+		table.appendChild(el("thead")).appendChild(headRow);
+		const tbody = el("tbody");
+		for (const record of sortForList(visible)) {
+			const row = el("tr");
+			const label = recordLabel(record);
+			if (me.canWrite) {
+				const cell = el("td", "dt-delete-cell");
+				if (canEdit(record)) {
+					const remove = button("×", "delete", "dt-button--danger");
+					remove.title = "削除";
+					remove.dataset["id"] = record.id;
+					remove.setAttribute("aria-label", `${label} を削除`);
+					cell.appendChild(remove);
+				}
+				row.appendChild(cell);
+			}
+			row.append(el("td", "dt-owner", memberName(record.ownerId)), el("td", void 0, label), el("td", "dt-num", `${record.shares.toLocaleString("ja-JP")}株`), el("td", void 0, formatPayDates(record.payments)), el("td", "dt-num", formatYen(recordTotal(record))));
+			if (canEdit(record)) {
+				row.className = "dt-row--editable";
+				row.dataset["id"] = record.id;
+				row.tabIndex = 0;
+			}
+			tbody.appendChild(row);
+		}
+		table.appendChild(tbody);
+		section.appendChild(table);
 		return section;
 	};
-	const draw = (message = "") => {
+	const buildChart = (visible) => {
+		const section = el("section", "page-section");
+		section.appendChild(el("h2", void 0, "月別配当額"));
+		const years = yearlyTotals(visible).map((t) => t.year);
+		if (years.length === 0) {
+			section.appendChild(el("p", void 0, EMPTY_TEXT));
+			return section;
+		}
+		const thisYear = String((/* @__PURE__ */ new Date()).getFullYear());
+		const year = chartYear !== null && years.includes(chartYear) ? chartYear : years.includes(thisYear) ? thisYear : years[0];
+		const select = el("select");
+		select.name = "chartYear";
+		for (const y of years) select.appendChild(option(y, `${y}年`, y === year));
+		section.appendChild(labeled("年", select));
+		const months = monthlyTotals(visible, year);
+		const max = Math.max(...months.map((m) => m.total));
+		const chart = el("ol", "dt-chart");
+		chart.setAttribute("aria-label", `${year}年の月別配当額`);
+		for (const { month, total } of months) {
+			const item = el("li", "dt-chart__month");
+			const text = `${month}月: ${formatYen(total)}`;
+			item.title = text;
+			item.setAttribute("aria-label", text);
+			const track = el("div", "dt-chart__track");
+			const bar = el("div", "dt-chart__bar");
+			bar.style.height = `${max > 0 ? total / max * 100 : 0}%`;
+			track.appendChild(bar);
+			item.append(el("span", "dt-chart__value", total > 0 ? formatYen(total) : ""), track, el("span", "dt-chart__label", `${month}月`));
+			chart.appendChild(item);
+		}
+		section.appendChild(chart);
+		return section;
+	};
+	const draw = () => {
 		const visible = filterByOwner(records, filter);
-		shell(buildTotals(visible), buildForm());
-		errorEl.textContent = message;
+		shell(buildTotals(visible), buildList(visible), buildChart(visible));
+	};
+	const paymentRow = (payDate = "", perShare = "") => {
+		const row = el("div", "dt-payment");
+		const perShareInput = input("text", "perShare", perShare);
+		perShareInput.inputMode = "decimal";
+		row.append(labeled("受取日", input("date", "payDate", payDate)), labeled("1株当たり配当（円）", perShareInput), button("削除", "remove-payment", "dt-button--secondary"));
+		return row;
+	};
+	/** 行の数に合わせて「削除」「受取日を追加」の disabled を切り替える。 */
+	const refreshPaymentButtons = (form) => {
+		const rows = form.querySelectorAll(".dt-payment");
+		for (const remove of form.querySelectorAll("[data-action=\"remove-payment\"]")) remove.disabled = rows.length <= 1;
+		const add = form.querySelector("[data-action=\"add-payment\"]");
+		if (add) add.disabled = rows.length >= 24;
+	};
+	const openDialog = (record) => {
+		if (dialog) return;
+		editing = record;
+		const owner = el("select");
+		owner.name = "ownerId";
+		const selected = record?.ownerId ?? me.id;
+		const choices = me.isAdmin ? [...members.keys()] : [me.id];
+		if (!choices.includes(selected)) choices.unshift(selected);
+		for (const id of choices) owner.appendChild(option(String(id), memberName(id), id === selected));
+		const shares = input("number", "shares", record ? String(record.shares) : "");
+		shares.min = "1";
+		shares.step = "1";
+		const payments = el("fieldset", "dt-payments");
+		payments.appendChild(el("legend", void 0, "受取日と1株当たり配当"));
+		if (record) for (const p of record.payments) payments.appendChild(paymentRow(p.payDate, perShareText(p.perShareCents)));
+		else payments.appendChild(paymentRow());
+		payments.appendChild(button("受取日を追加", "add-payment", "dt-button--secondary"));
+		const submit = el("button", void 0, record ? "保存" : "追加");
+		submit.type = "submit";
+		const actions = el("div", "dt-actions");
+		actions.append(button("キャンセル", "cancel", "dt-button--secondary"), submit);
+		const form = el("form", "dt-form");
+		const ownerField = labeled("保有者", owner);
+		ownerField.className = "dt-field--wide";
+		const sharesField = labeled("保有株数", shares);
+		sharesField.className = "dt-field--shares";
+		form.append(ownerField, labeled("銘柄コード", input("text", "ticker", record?.ticker ?? "")), labeled("銘柄名", input("text", "name", record?.name ?? "")), sharesField, payments, el("p", "dt-error"), actions);
+		refreshPaymentButtons(form);
+		dialog = el("dialog", "dt-dialog");
+		dialog.append(el("h2", void 0, record ? "配当を編集" : "配当を追加"), form);
+		const opened = dialog;
+		opened.addEventListener("close", () => {
+			opened.remove();
+			if (dialog === opened) {
+				dialog = null;
+				editing = null;
+			}
+		}, { signal });
+		container.appendChild(opened);
+		opened.showModal();
+	};
+	const readForm = (form) => {
+		const data = new FormData(form);
+		const text = (key) => String(data.get(key) ?? "");
+		const dates = data.getAll("payDate").map(String);
+		const perShares = data.getAll("perShare").map(String);
+		return {
+			ownerId: Number(text("ownerId")),
+			ticker: text("ticker"),
+			name: text("name"),
+			sharesText: text("shares"),
+			payments: dates.map((payDate, i) => ({
+				payDate,
+				perShareText: perShares[i] ?? ""
+			}))
+		};
 	};
 	const showFailure = (message = "データを読み込めませんでした") => {
 		const section = el("section", "page-section");
-		const retry = el("button", void 0, "再読み込み");
-		retry.type = "button";
-		retry.dataset["action"] = "reload";
+		const retry = button("再読み込み", "reload");
 		section.append(el("p", "dt-error", message), retry);
 		shell(section);
 	};
@@ -228,53 +432,107 @@ async function render(container, context) {
 			if (!signal.aborted) showFailure();
 		}
 	};
+	const deleteRecord = async (deleteButton) => {
+		const record = records.find((r) => r.id === deleteButton.dataset["id"]);
+		if (!record || !canEdit(record)) return;
+		const message = `「${recordLabel(record)}」（${memberName(record.ownerId)}）を削除しますか？この操作は取り消せません。`;
+		if (!window.confirm(message)) return;
+		deleteButton.disabled = true;
+		try {
+			const res = await request("DELETE", `${ENDPOINT}/${encodeURIComponent(record.id)}`);
+			if (signal.aborted) return;
+			if (res.ok) {
+				records = records.filter((r) => r.id !== record.id);
+				listError = "";
+			} else {
+				listError = await errorMessage(res, "削除できませんでした");
+				if (signal.aborted) return;
+			}
+		} catch {
+			if (signal.aborted) return;
+			listError = "削除できませんでした";
+		}
+		draw();
+	};
+	const openEditor = (row) => {
+		const id = row instanceof HTMLElement ? row.dataset["id"] : void 0;
+		const record = records.find((r) => r.id === id);
+		if (record && canEdit(record)) openDialog(record);
+	};
 	container.addEventListener("change", (e) => {
 		const target = e.target;
-		if (!(target instanceof HTMLSelectElement) || target.name !== "filter") return;
-		filter = target.value === "" ? null : Number(target.value);
+		if (!(target instanceof HTMLSelectElement)) return;
+		if (target.name === "filter") {
+			filter = target.value === "" ? null : Number(target.value);
+			listError = "";
+		} else if (target.name === "chartYear") chartYear = target.value;
+		else return;
 		draw();
 	}, { signal });
 	container.addEventListener("submit", async (e) => {
 		e.preventDefault();
 		const form = e.target;
-		if (!(form instanceof HTMLFormElement)) return;
-		const data = new FormData(form);
-		const text = (key) => String(data.get(key) ?? "");
-		const payload = {
-			ownerId: Number(text("ownerId")),
-			ticker: text("ticker"),
-			name: text("name"),
-			payDate: text("payDate"),
-			sharesText: text("shares"),
-			perShareText: text("perShare")
+		if (!(form instanceof HTMLFormElement) || !dialog?.contains(form)) return;
+		const errorEl = form.querySelector(".dt-error");
+		const showError = (message) => {
+			if (errorEl) errorEl.textContent = message;
 		};
+		const payload = readForm(form);
 		const error = validateInput(payload);
 		if (error !== null) {
-			errorEl.textContent = error;
+			showError(error);
 			return;
 		}
-		const button = submitEl;
-		if (button) button.disabled = true;
+		const target = editing;
+		const submit = form.querySelector("button[type=\"submit\"]");
+		if (submit) submit.disabled = true;
 		try {
-			const res = await request("POST", ENDPOINT, payload);
+			const res = target ? await request("PUT", `${ENDPOINT}/${encodeURIComponent(target.id)}`, payload) : await request("POST", ENDPOINT, payload);
 			if (signal.aborted) return;
 			if (!res.ok) {
-				errorEl.textContent = await errorMessage(res, "保存できませんでした");
+				showError(await errorMessage(res, "保存できませんでした"));
 				return;
 			}
 			const body = await res.json();
 			if (signal.aborted) return;
-			if (isValidRecord(body.data)) records = [...records, body.data];
+			const saved = body.data;
+			if (isValidRecord(saved)) records = target ? records.map((r) => r.id === saved.id ? saved : r) : [...records, saved];
+			dialog?.close();
+			listError = "";
 			draw();
 		} catch {
-			if (!signal.aborted) errorEl.textContent = "保存できませんでした";
+			if (!signal.aborted) showError("保存できませんでした");
 		} finally {
-			if (button) button.disabled = false;
+			if (submit) submit.disabled = false;
 		}
 	}, { signal });
 	container.addEventListener("click", async (e) => {
 		if (!(e.target instanceof Element)) return;
-		if (e.target.closest("[data-action=\"reload\"]")) await load();
+		const actionEl = e.target.closest("[data-action]");
+		const action = actionEl instanceof HTMLElement ? actionEl.dataset["action"] : void 0;
+		const form = actionEl?.closest("form");
+		if (action === "reload") await load();
+		else if (action === "add") openDialog(null);
+		else if (action === "cancel") dialog?.close();
+		else if (action === "delete" && actionEl instanceof HTMLButtonElement) await deleteRecord(actionEl);
+		else if (action === "add-payment" && form) {
+			if (form.querySelectorAll(".dt-payment").length < 24) actionEl?.before(paymentRow());
+			refreshPaymentButtons(form);
+		} else if (action === "remove-payment" && form) {
+			if (form.querySelectorAll(".dt-payment").length > 1) actionEl?.closest(".dt-payment")?.remove();
+			refreshPaymentButtons(form);
+		} else if (action === void 0) {
+			const row = e.target.closest("tr.dt-row--editable");
+			if (row) openEditor(row);
+		}
+	}, { signal });
+	container.addEventListener("keydown", (e) => {
+		const target = e.target;
+		if (!(target instanceof HTMLTableRowElement)) return;
+		if (!target.classList.contains("dt-row--editable")) return;
+		if (e.key !== "Enter" && e.key !== " ") return;
+		e.preventDefault();
+		openEditor(target);
 	}, { signal });
 	await load();
 }

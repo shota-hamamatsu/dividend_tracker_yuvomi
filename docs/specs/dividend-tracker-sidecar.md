@@ -1,4 +1,6 @@
-# 仕様: 配当管理サイドカー（server/）
+# 仕様: 配当管理サイドカー（server/）v0.3
+
+v0.3 の変更点: 記録が受取日を複数持つ（`docs/specs/dividend-tracker-logic.md` v0.3）。記録の編集（PUT）を追加。保存ファイルを version 2 にし、version 1 を読み込み時に移行する。
 
 yuvomi の横で動く小さな HTTP サービス。配当記録をサーバー側に保存し、家族全員で共有する。
 yuvomi の `MODULES.md`「Modules With A Backend Service」の要件に従う。
@@ -36,7 +38,7 @@ yuvomi の `MODULES.md`「Modules With A Backend Service」の要件に従う。
 3. 権限が `'none'` なら 403。値が無い場合は `'write'` 扱い（yuvomi の既定はフルアクセス）。
 4. ユーザー id・役割をリクエスト本文から受け取らない。
 
-### 書き込み（POST / DELETE）の追加条件
+### 書き込み（POST / PUT / DELETE）の追加条件
 
 - `Origin` ヘッダーが `PUBLIC_ORIGIN` と完全一致しなければ 403。
 - CSRF（二重送信）: Cookie `dt_csrf` とヘッダー `X-DT-CSRF` が両方あり一致しなければ 403。比較は `timingSafeEqual`。
@@ -56,12 +58,24 @@ yuvomi の `MODULES.md`「Modules With A Backend Service」の要件に従う。
 ### `POST /api/extensions/dividend-tracker/records`
 
 - `Content-Type` が `application/json` で始まらなければ 415。本文 16 KB 超は 413。JSON 不正は 400。
-- 本文 `{ ownerId, ticker, name, payDate, sharesText, perShareText }`（`RecordInput`）。型が違えば 400。
+- 本文 `{ ownerId, ticker, name, sharesText, payments: [{ payDate, perShareText }] }`（`RecordInput`）。
+  型が違えば 400 `'データの形式が正しくありません'`（`ownerId` が number、`ticker`・`name`・`sharesText` が string、`payments` が配列で各要素の `payDate`・`perShareText` が string）。
+  `payments` が MAX_PAYMENTS 件を超える場合は要素の型を調べる前に `validateInput` のメッセージで 400 にしてよい。
 - `validateInput` がメッセージを返したら 400（そのメッセージ）。
 - `ownerId` が `GET /api/v1/family/members`（呼び出し者の Cookie で取得、5 秒キャッシュ）の `id` に無ければ 400 `'保有者が家族にいません'`。
 - 管理者でなく `ownerId !== me.id` なら 403 `'自分以外の記録は管理者だけが追加できます'`。
-- 保存するレコード: `id = crypto.randomUUID()`、`ticker`・`name` は trim、`shares`・`perShareCents` は parse 結果、`amount = calcAmount(...)`、`createdBy = me.id`、`createdAt = new Date().toISOString()`。
+- 保存するレコード: `id = crypto.randomUUID()`、`ticker`・`name` は trim、`shares` は parse 結果、`payments = buildPayments(shares, input.payments)`、
+  `createdBy = me.id`、`createdAt = updatedAt = new Date().toISOString()`。本文に `amount`・`perShareCents` などがあっても無視する。
 - 201 `{ data: DividendRecord }`。
+
+### `PUT /api/extensions/dividend-tracker/records/<id>`
+
+- 本文の受け取りと検証（415 / 413 / 400 / 家族チェック）は POST と同じ。
+- 該当なし 404 `'記録が見つかりません'`。
+- 管理者でなく、既存の `record.ownerId !== me.id` なら 403 `'自分以外の記録は管理者だけが編集できます'`。
+- 管理者でなく、本文の `ownerId !== me.id` なら 403 `'自分以外の記録は管理者だけが追加できます'`（保有者を他人に付け替えられない）。
+- 保存するレコード: `id`・`createdBy`・`createdAt` は既存のまま。`ownerId`・`ticker`・`name`・`shares`・`payments` は POST と同じ規則で本文から作る。`updatedAt = new Date().toISOString()`。
+- 200 `{ data: DividendRecord }`。
 
 ### `DELETE /api/extensions/dividend-tracker/records/<id>`
 
@@ -70,12 +84,14 @@ yuvomi の `MODULES.md`「Modules With A Backend Service」の要件に従う。
 
 ### その他
 
-- パスが一致しなければ 404、メソッドが違えば 405。
+- パスが一致しなければ 404、メソッドが違えば 405（`/records` は GET・POST、`/records/<id>` は PUT・DELETE）。
 - `GET /api/extensions/dividend-tracker/health` は認証なしで 200 `{ ok: true }`（コンテナのヘルスチェック用。データは返さない）。
 
 ## 保存（store.ts）
 
-- `{DATA_DIR}/records.json` に `{ "version": 1, "records": [...] }`。起動時に読み、`isValidRecord` を満たすものだけ使う。ファイルが無ければ空。
+- `{DATA_DIR}/records.json` に `{ "version": 2, "records": [...] }`。ファイルが無ければ空。
+- 起動時に読む。`version` が 2 なら `isValidRecord` を満たすものだけ使う。`version` が 1 なら各要素を `migrateLegacyRecord` で変換し、null でないものだけ使う（ファイルは次の書き込み時に version 2 で書き直される）。それ以外の version は空として扱わず、起動を失敗させる（例外）。
+- `Store` は `list()`・`get(id)`・`add(record)`・`update(record): Promise<boolean>`（同じ id を置き換える。無ければ false）・`remove(id)`。
 - 書き込みは一時ファイル → `rename` で置き換え。同時書き込みは Promise チェーンで直列化する。
 - メモリ上の配列を正とし、書き込み失敗時は変更を元に戻して 500 `'保存できませんでした'`。
 
@@ -84,4 +100,6 @@ yuvomi の `MODULES.md`「Modules With A Backend Service」の要件に従う。
 - Cookie なし 401 / auth/me が 401 → 401 / 権限 none → 403。
 - GET が全員分と `me`・`csrfToken` を返し、`Set-Cookie` を付ける。
 - POST: Origin 不一致 403、CSRF 不一致 403、read 権限 403、検証エラー 400、家族以外の ownerId 400、非管理者が他人の ownerId 403、管理者は他人の分を追加できる、amount はサーバーが計算する（本文の amount は無視）。
+- PUT: 非管理者が他人の記録 403、非管理者が保有者を他人に変える 403、本人は編集可（`createdAt` は変わらず `updatedAt` が変わる）、管理者は他人の記録も編集可、存在しない id 404、検証エラー 400。
+- store: version 1 のファイルを移行して読み込み、書き込み後は version 2 になる。
 - DELETE: 非管理者が他人の記録 403、本人は削除可、管理者は他人の記録も削除可、存在しない id 404。

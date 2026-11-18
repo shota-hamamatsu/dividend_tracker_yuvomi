@@ -1,4 +1,10 @@
-import { calcAmount, parsePerShare, parseShares, type DividendRecord } from '../src/logic.ts';
+import {
+    buildPayments,
+    parseShares,
+    validateInput,
+    type DividendRecord,
+    type RecordInput,
+} from '../src/logic.ts';
 
 export const SCENARIOS = ['admin', 'member', 'viewer', 'empty', 'error', 'slow'] as const;
 export type Scenario = (typeof SCENARIOS)[number];
@@ -11,27 +17,40 @@ const rec = (
     ownerId: number,
     ticker: string,
     name: string,
-    payDate: string,
     shares: number,
-    perShareCents: number,
+    payments: [payDate: string, perShareText: string][],
 ): DividendRecord => ({
     id,
     ownerId,
     ticker,
     name,
-    payDate,
     shares,
-    perShareCents,
-    amount: calcAmount(shares, perShareCents),
+    payments: buildPayments(
+        shares,
+        payments.map(([payDate, perShareText]) => ({ payDate, perShareText })),
+    ),
     createdBy: ownerId,
-    createdAt: `${payDate}T00:00:00.000Z`,
+    createdAt: '2024-01-01T00:00:00.000Z',
+    updatedAt: '2024-01-01T00:00:00.000Z',
 });
 
 const seed = (): DividendRecord[] => [
-    rec('1', 1, '7203', 'トヨタ自動車', '2024-06-03', 100, 4500),
-    rec('2', 2, '9432', 'NTT', '2024-09-27', 1000, 520),
-    rec('3', 3, '8058', '三菱商事', '2025-03-31', 200, 5600),
-    rec('4', 1, '7203', 'トヨタ自動車', '2025-06-02', 100, 4500),
+    rec('1', 1, '7203', 'トヨタ自動車', 100, [
+        ['2024-06-03', '45'],
+        ['2024-11-27', '45'],
+        ['2025-06-02', '50'],
+        ['2025-11-26', '45'],
+    ]),
+    rec('2', 2, '9432', 'NTT', 1000, [
+        ['2024-06-24', '2.6'],
+        ['2024-12-09', '2.6'],
+        ['2025-06-23', '2.65'],
+    ]),
+    rec('3', 3, '8058', '三菱商事', 200, [
+        ['2025-03-31', '56'],
+        ['2025-09-30', '60'],
+    ]),
+    rec('4', 2, '8306', '三菱UFJ', 300, [['2025-06-27', '32.5']]),
 ];
 
 const json = (status: number, body: unknown): Response =>
@@ -59,6 +78,7 @@ const realFetch = window.fetch.bind(window);
 
 export function installMockFetch(scenario: Scenario): void {
     const records = scenario === 'empty' ? [] : seed();
+    let nextId = records.length + 1;
     const me = {
         id: scenario === 'member' || scenario === 'viewer' ? 2 : 1,
         isAdmin: scenario !== 'member' && scenario !== 'viewer',
@@ -71,8 +91,9 @@ export function installMockFetch(scenario: Scenario): void {
         if (!url.startsWith(ENDPOINT)) return realFetch(input, init);
         const signal = init?.signal ?? undefined;
         if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+        const method = init?.method ?? 'GET';
 
-        if ((init?.method ?? 'GET') === 'GET') {
+        if (method === 'GET') {
             if (scenario === 'slow') await sleep(2000, signal);
             if (scenario === 'error') return json(500, { error: '開発用: 取得エラー' });
             return json(200, { data: records, me, csrfToken: TOKEN });
@@ -83,31 +104,55 @@ export function installMockFetch(scenario: Scenario): void {
             return json(403, { error: '画面を再読み込みしてから、もう一度お試しください' });
         }
         if (!me.canWrite) return json(403, { error: '書き込み権限がありません' });
-        const body = JSON.parse(String(init?.body ?? '{}')) as {
-            ownerId: number;
-            ticker: string;
-            name: string;
-            payDate: string;
-            sharesText: string;
-            perShareText: string;
-        };
+
+        if (method === 'DELETE') {
+            const id = decodeURIComponent(url.slice(ENDPOINT.length + 1));
+            const index = records.findIndex((r) => r.id === id);
+            const current = records[index];
+            if (!current) return json(404, { error: '記録が見つかりません' });
+            if (!me.isAdmin && current.ownerId !== me.id) {
+                return json(403, { error: '自分の記録だけ削除できます' });
+            }
+            records.splice(index, 1);
+            return json(200, { data: { id, deleted: true } });
+        }
+
+        const body = JSON.parse(String(init?.body ?? '{}')) as RecordInput;
+        const error = validateInput(body);
+        if (error !== null) return json(400, { error });
         if (!me.isAdmin && body.ownerId !== me.id) {
-            return json(403, { error: '自分の記録だけ追加できます' });
+            return json(403, { error: '自分の記録だけ追加・編集できます' });
         }
-        const shares = parseShares(body.sharesText);
-        const perShare = parsePerShare(body.perShareText);
-        if (shares === null || perShare === null) {
-            return json(400, { error: '入力が正しくありません' });
-        }
-        const record = rec(
-            String(records.length + 1),
-            body.ownerId,
-            body.ticker,
-            body.name,
-            body.payDate,
+        const shares = parseShares(body.sharesText) as number;
+        const fields = {
+            ownerId: body.ownerId,
+            ticker: body.ticker.trim(),
+            name: body.name.trim(),
             shares,
-            perShare,
-        );
+            payments: buildPayments(shares, body.payments),
+        };
+        const now = new Date().toISOString();
+
+        if (method === 'PUT') {
+            const id = decodeURIComponent(url.slice(ENDPOINT.length + 1));
+            const index = records.findIndex((r) => r.id === id);
+            const current = records[index];
+            if (!current) return json(404, { error: '記録が見つかりません' });
+            if (!me.isAdmin && current.ownerId !== me.id) {
+                return json(403, { error: '自分の記録だけ追加・編集できます' });
+            }
+            const record: DividendRecord = { ...current, ...fields, updatedAt: now };
+            records[index] = record;
+            return json(200, { data: record });
+        }
+
+        const record: DividendRecord = {
+            id: String(nextId++),
+            ...fields,
+            createdBy: me.id,
+            createdAt: now,
+            updatedAt: now,
+        };
         records.push(record);
         return json(201, { data: record });
     };
