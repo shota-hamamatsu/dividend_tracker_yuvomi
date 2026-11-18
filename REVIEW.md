@@ -13,11 +13,14 @@
 
 ## 2. フォーマットと静的解析（linter / formatter）
 
-- linter / formatter のエラーが出ていないか。
-- 警告が出ていないか。出ている場合は、無視してよい理由が明記されているか（理由の無い `eslint-disable` などは指摘する）。
-- 型チェック（`npm run typecheck`）でエラー・警告が出ていないか。
-- 整形ツールの差分（インデント、改行、クォート、末尾のカンマなど）が、変更範囲以外に広がっていないか。
-- 現時点では linter / formatter は未導入のため、導入されたら本節の確認項目に加える。
+役割は次のとおりです。ESLint は問題の検出、Prettier は整形を担当します。
+
+- `npm run lint`（ESLint）でエラー・警告が出ていないか。
+- `npm run format:check`（Prettier）で整形ずれが無いか。
+- `npm run typecheck` でエラー・警告が出ていないか。
+- ESLint の警告を `eslint-disable` などで消す場合は、理由を明記しているか（理由の無い無効化は指摘する）。
+- 整形の差分（インデント、改行、クォートなど）が変更範囲以外に広がっていないか。
+- 整形は Prettier に任せる。ESLint 側で整形ルールを追加・有効化していないか（`eslint-config-prettier` で無効化済み）。
 
 ## 3. バグ
 

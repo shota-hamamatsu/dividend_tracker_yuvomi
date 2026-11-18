@@ -1,0 +1,12 @@
+# 生成物・依存関係
+node_modules/
+modules/
+dist/
+package-lock.json
+
+# ドキュメント（既存の文章を勝手に整形しないため対象外）
+*.md
+docs/
+
+# 個人用・非共有
+scripts/
