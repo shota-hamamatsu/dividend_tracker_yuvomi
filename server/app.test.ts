@@ -6,7 +6,7 @@ import { createHandler, PREFIX } from './app.ts';
 import { memoryStore, type Store } from './store.ts';
 import type { Me } from './yuvomi.ts';
 import { parseMe } from './yuvomi.ts';
-import type { DividendRecord } from '../src/logic.ts';
+import type { DividendRecord, YearlyTotal } from '../src/logic.ts';
 
 const ORIGIN = 'https://yuvomi.example.com';
 const TOKEN = 'a'.repeat(64);
@@ -31,7 +31,7 @@ function existing(id: string, ownerId: number): DividendRecord {
         ticker: '7203',
         name: 'トヨタ',
         shares: 100,
-        payments: [{ payDate: '2025-03-31', perShareCents: 4500, amount: 4500 }],
+        payments: [{ payDate: '03-31', perShareCents: 4500, amount: 4500 }],
         createdBy: ownerId,
         createdAt: '2025-04-01T00:00:00.000Z',
         updatedAt: '2025-04-01T00:00:00.000Z',
@@ -87,8 +87,8 @@ const input = {
     name: ' 三菱UFJ ',
     sharesText: '3',
     payments: [
-        { payDate: '2025-12-01', perShareText: '40', amount: 999999 }, // amount は無視されるべき
-        { payDate: '2025-06-30', perShareText: '37.5' },
+        { payDate: '12-01', perShareText: '40', amount: 999999 }, // amount は無視されるべき
+        { payDate: '06-30', perShareText: '37.5' },
     ],
     amount: 999999, // 無視されるべき
 };
@@ -114,10 +114,12 @@ test('GET returns all records, me and a CSRF cookie', async () => {
     );
     const body = (await res.json()) as {
         data: DividendRecord[];
+        yearlyTotals: YearlyTotal[];
         me: unknown;
         csrfToken: string;
     };
     assert.equal(body.data.length, 2);
+    assert.deepEqual(body.yearlyTotals, []);
     assert.deepEqual(body.me, { id: 3, isAdmin: false, canWrite: false });
     assert.equal(cookie.slice('dt_csrf='.length, 'dt_csrf='.length + 64), body.csrfToken);
 
@@ -148,7 +150,7 @@ test('POST validates input and owner', async () => {
     reset();
     const bad = await write('POST', '/records', 'alice', {
         ...input,
-        payments: [{ payDate: '2025-06-30', perShareText: '1.234' }],
+        payments: [{ payDate: '06-30', perShareText: '1.234' }],
     });
     assert.equal(bad.status, 400);
     assert.equal(
@@ -165,7 +167,7 @@ test('POST validates input and owner', async () => {
         ((await none.json()) as { error: string }).error,
         '受取日を1つ以上入力してください',
     );
-    for (const payments of [undefined, 'x', [null], [{ payDate: '2025-06-30' }]]) {
+    for (const payments of [undefined, 'x', [null], [{ payDate: '06-30' }]]) {
         const res = await write('POST', '/records', 'alice', { ...input, payments });
         assert.equal(res.status, 400, JSON.stringify(payments));
         assert.equal(
@@ -204,8 +206,8 @@ test('POST stores a record with a server-computed amount', async () => {
     assert.equal(data.shares, 3);
     // 日付順に並べ、各回の受取額は 1 円未満切り捨て（3 × 37.5 = 112.5 → 112）
     assert.deepEqual(data.payments, [
-        { payDate: '2025-06-30', perShareCents: 3750, amount: 112 },
-        { payDate: '2025-12-01', perShareCents: 4000, amount: 120 },
+        { payDate: '06-30', perShareCents: 3750, amount: 112 },
+        { payDate: '12-01', perShareCents: 4000, amount: 120 },
     ]);
     assert.equal(data.createdBy, 2);
     assert.equal(data.updatedAt, data.createdAt);
@@ -225,7 +227,7 @@ test('PUT edits a record, keeping id and creation info', async () => {
     const edit = {
         ...input,
         sharesText: '200',
-        payments: [{ payDate: '2025-09-30', perShareText: '50' }],
+        payments: [{ payDate: '09-30', perShareText: '50' }],
     };
     assert.equal((await write('PUT', '/records/r-admin', 'alice', edit)).status, 403);
     assert.equal(
@@ -247,9 +249,7 @@ test('PUT edits a record, keeping id and creation info', async () => {
     assert.equal(data.id, 'r-alice');
     assert.equal(data.ticker, '8306');
     assert.equal(data.shares, 200);
-    assert.deepEqual(data.payments, [
-        { payDate: '2025-09-30', perShareCents: 5000, amount: 10000 },
-    ]);
+    assert.deepEqual(data.payments, [{ payDate: '09-30', perShareCents: 5000, amount: 10000 }]);
     assert.equal(data.createdBy, 2);
     assert.equal(data.createdAt, '2025-04-01T00:00:00.000Z');
     assert.notEqual(data.updatedAt, data.createdAt);
@@ -276,6 +276,70 @@ test('DELETE enforces ownership unless admin', async () => {
         store.list().map((r) => r.id),
         ['r-admin'],
     );
+});
+
+test('PUT /yearly-totals/<year> registers the total computed from stored records', async () => {
+    reset();
+    assert.equal(
+        (
+            await write('PUT', '/yearly-totals/2026', 'alice', undefined, {
+                origin: 'https://evil.example',
+            })
+        ).status,
+        403,
+    );
+    assert.equal(
+        (await write('PUT', '/yearly-totals/2026', 'alice', undefined, { csrf: 'b'.repeat(64) }))
+            .status,
+        403,
+    );
+    assert.equal((await write('PUT', '/yearly-totals/2026', 'reader')).status, 403);
+    for (const bad of ['1999', '2101', 'abc', '26']) {
+        const res = await write('PUT', `/yearly-totals/${bad}`, 'alice');
+        assert.equal(res.status, 400, bad);
+        assert.equal(
+            ((await res.json()) as { error: string }).error,
+            '年は2000〜2100で指定してください',
+        );
+    }
+    assert.deepEqual(store.listYearlyTotals(), []);
+
+    // 管理者でなくても登録でき、金額はサーバーの記録から計算する（本文は使わない）
+    const res = await write('PUT', '/yearly-totals/2026', 'alice', { total: 999999 });
+    assert.equal(res.status, 200);
+    const { data } = (await res.json()) as { data: YearlyTotal };
+    assert.equal(data.year, 2026);
+    assert.equal(data.total, 9000);
+    assert.deepEqual(data.owners, [
+        { ownerId: 1, total: 4500 },
+        { ownerId: 2, total: 4500 },
+    ]);
+    assert.equal(data.registeredBy, 2);
+    assert.deepEqual(store.listYearlyTotals(), [data]);
+
+    // 同じ年は置き換える。年の昇順で返す
+    await store.remove('r-admin');
+    const again = await write('PUT', '/yearly-totals/2026', 'admin');
+    const replaced = ((await again.json()) as { data: YearlyTotal }).data;
+    assert.equal(replaced.total, 4500);
+    assert.equal(replaced.registeredBy, 1);
+    await write('PUT', '/yearly-totals/2020', 'admin');
+    assert.deepEqual(
+        store.listYearlyTotals().map((t) => [t.year, t.total]),
+        [
+            [2020, 4500],
+            [2026, 4500],
+        ],
+    );
+    const list = await fetch(`${base}/records`, { headers: { cookie: 'session=reader' } });
+    const body = (await list.json()) as { yearlyTotals: YearlyTotal[] };
+    assert.deepEqual(
+        body.yearlyTotals.map((t) => t.year),
+        [2020, 2026],
+    );
+
+    const get = await fetch(`${base}/yearly-totals/2026`, { headers: { cookie: 'session=alice' } });
+    assert.equal(get.status, 405);
 });
 
 test('unknown paths and methods', async () => {

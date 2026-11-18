@@ -11,8 +11,7 @@
   align-items: end;
 }
 
-.dt-form label,
-.page-section > label {
+.dt-form label {
   display: grid;
   gap: var(--space-1, 0.25rem);
   min-width: 0;
@@ -22,7 +21,8 @@
 
 .dt-form input,
 .dt-form select,
-.page-section > label select {
+.dt-filter select,
+.dt-register input {
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
@@ -34,12 +34,8 @@
   color: var(--color-text-primary);
 }
 
-.page-section > label {
-  display: inline-grid;
-  margin-bottom: var(--space-2, 0.5rem);
-}
-
-.dt-form button {
+.dt-form button,
+.dt-register button {
   justify-self: start;
   min-height: var(--target-base, 44px);
   padding: var(--space-2, 0.5rem) var(--space-4, 1rem);
@@ -51,18 +47,49 @@
   cursor: pointer;
 }
 
-.dt-form button:disabled {
+.dt-form button:disabled,
+.dt-register button:disabled {
   opacity: 0.6;
   cursor: default;
 }
 
-.dt-totals {
+/* 合計額と年別合計の登録 */
+.dt-total {
   margin: var(--space-2, 0.5rem) 0 0;
-  padding: 0;
-  list-style: none;
-  font-size: var(--text-lg, 1.125rem);
+  font-size: var(--text-2xl, 1.5rem);
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-primary);
+}
+
+.dt-register {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: var(--space-2, 0.5rem);
+  margin-top: var(--space-3, 0.75rem);
+}
+
+.dt-register label {
+  display: grid;
+  gap: var(--space-1, 0.25rem);
+  font-size: var(--type-caption, 0.8125rem);
+  color: var(--color-text-secondary);
+}
+
+.dt-register input {
+  width: 7rem;
+}
+
+.dt-note,
+.dt-register__message {
+  margin: var(--space-2, 0.5rem) 0 0;
+  font-size: var(--type-caption, 0.8125rem);
+  color: var(--color-text-secondary);
+}
+
+.dt-register__message:empty {
+  display: none;
 }
 
 .dt-error {
@@ -73,11 +100,12 @@
 }
 
 /* 銘柄一覧 */
+/* 見出し・保有者フィルタは左寄せ、追加ボタンは右端。狭い画面では折り返す */
 .dt-heading {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3, 0.75rem);
+  gap: var(--space-2, 0.5rem) var(--space-4, 1rem);
   margin-bottom: var(--space-2, 0.5rem);
 }
 
@@ -85,7 +113,20 @@
   margin: 0;
 }
 
+.dt-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2, 0.5rem);
+  font-size: var(--type-caption, 0.8125rem);
+  color: var(--color-text-secondary);
+}
+
+.dt-filter select {
+  width: auto;
+}
+
 .dt-heading button {
+  margin-left: auto;
   min-height: var(--target-base, 44px);
   padding: var(--space-2, 0.5rem) var(--space-4, 1rem);
   border: 0;
@@ -185,6 +226,13 @@
   grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) auto;
   gap: var(--space-2, 0.5rem);
   align-items: end;
+}
+
+/* 受取日の月と日 */
+.dt-payday {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-1, 0.25rem);
 }
 
 .dt-actions {
@@ -395,6 +443,12 @@
 @media (max-width: 40rem) {
   .dt-chart__value {
     display: none;
+  }
+
+  /* 年別の年（4 桁）が 12 列に収まるように小さくする */
+  .dt-chart__label {
+    font-size: 0.6875rem;
+    letter-spacing: -0.02em;
   }
 }
 

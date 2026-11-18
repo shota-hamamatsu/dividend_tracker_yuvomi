@@ -1,5 +1,5 @@
 export interface Payment {
-    payDate: string; // YYYY-MM-DD
+    payDate: string; // MM-DD（毎年この月日に受け取る）
     perShareCents: number; // 1株当たり配当（1/100 円単位の整数）
     amount: number; // 受取額（円）= calcAmount(record.shares, perShareCents)
 }
@@ -29,9 +29,30 @@ export interface RecordInput {
     payments: PaymentInput[];
 }
 
+export interface OwnerTotal {
+    ownerId: number;
+    total: number; // 円。1 以上
+}
+
+/** 合計と保有者ごとの内訳（owners は ownerId の昇順、0 円の保有者は含めない）。 */
+export interface Breakdown {
+    total: number; // 円。owners の total の和
+    owners: OwnerTotal[];
+}
+
+/** 利用者が年を指定して登録した、その年の配当合計（登録時点の記録の 1 年分）。 */
+export interface YearlyTotal extends Breakdown {
+    year: number; // MIN_YEAR〜MAX_YEAR
+    registeredBy: number;
+    registeredAt: string; // ISO 8601
+}
+
 const MAX_SHARES = 10_000_000;
 const MAX_PER_SHARE_CENTS = 10_000_000; // 100,000円
 export const MAX_PAYMENTS = 24;
+export const MIN_YEAR = 2000;
+export const MAX_YEAR = 2100;
+export const CHART_YEARS = 12;
 
 function isPositiveInt(value: unknown): value is number {
     return typeof value === 'number' && Number.isInteger(value) && value > 0;
@@ -77,6 +98,11 @@ export function isValidDate(text: string): boolean {
     );
 }
 
+/** 'MM-DD' がうるう年（2000 年）に実在する月日か。 */
+export function isValidPayDate(text: string): boolean {
+    return /^\d{2}-\d{2}$/.test(text) && isValidDate(`2000-${text}`);
+}
+
 export function validateInput(input: RecordInput): string | null {
     if (!isPositiveInt(input.ownerId)) return '保有者を選んでください';
     if (input.ticker.trim() === '') return '銘柄コードを入力してください';
@@ -84,7 +110,7 @@ export function validateInput(input: RecordInput): string | null {
     if (input.payments.length === 0) return '受取日を1つ以上入力してください';
     if (input.payments.length > MAX_PAYMENTS) return `受取日は${MAX_PAYMENTS}件までです`;
     for (const payment of input.payments) {
-        if (!isValidDate(payment.payDate)) return '受取日を入力してください';
+        if (!isValidPayDate(payment.payDate)) return '受取日を正しく選んでください';
         if (parsePerShare(payment.perShareText) === null) {
             return '1株当たり配当は0以上、小数第2位までで入力してください';
         }
@@ -117,19 +143,24 @@ function isValidPerShareCents(value: unknown): value is number {
     );
 }
 
-function isValidPayment(value: unknown, shares: number): value is Payment {
+function isValidPayment(
+    value: unknown,
+    shares: number,
+    isDate: (text: string) => boolean,
+): value is Payment {
     if (typeof value !== 'object' || value === null) return false;
     const p = value as Record<string, unknown>;
     const { perShareCents } = p;
     return (
         typeof p['payDate'] === 'string' &&
-        isValidDate(p['payDate']) &&
+        isDate(p['payDate']) &&
         isValidPerShareCents(perShareCents) &&
         p['amount'] === calcAmount(shares, perShareCents)
     );
 }
 
-export function isValidRecord(value: unknown): value is DividendRecord {
+/** 記録の形を調べる。日付の形式（v0.4 は MM-DD、v0.3 は YYYY-MM-DD）だけ差し替えられる。 */
+function isRecordShape(value: unknown, isDate: (text: string) => boolean): value is DividendRecord {
     if (typeof value !== 'object' || value === null) return false;
     const r = value as Record<string, unknown>;
     const { shares, payments } = r;
@@ -139,7 +170,7 @@ export function isValidRecord(value: unknown): value is DividendRecord {
     }
     for (let i = 0; i < payments.length; i++) {
         const payment: unknown = payments[i];
-        if (!isValidPayment(payment, shares)) return false;
+        if (!isValidPayment(payment, shares, isDate)) return false;
         if (i > 0 && (payments[i - 1] as Payment).payDate >= payment.payDate) return false;
     }
     return (
@@ -154,7 +185,27 @@ export function isValidRecord(value: unknown): value is DividendRecord {
     );
 }
 
-/** v0.2 形式（payDate を 1 つだけ持つ記録）を v0.3 形式に変換する。不正なら null。 */
+export function isValidRecord(value: unknown): value is DividendRecord {
+    return isRecordShape(value, isValidPayDate);
+}
+
+/**
+ * v0.3 形式（payDate が YYYY-MM-DD）の記録を v0.4 形式（MM-DD）に変換する。不正なら null。
+ * 同じ月日が複数あれば、最も新しい年のものを残す。
+ */
+export function migrateV3Record(value: unknown): DividendRecord | null {
+    if (!isRecordShape(value, isValidDate)) return null;
+    // payments は年月日の昇順なので、後のもの（新しい年）で上書きすれば新しい年が残る
+    const byDay = new Map<string, Payment>();
+    for (const payment of value.payments) {
+        const payDate = payment.payDate.substring(5);
+        byDay.set(payDate, { ...payment, payDate });
+    }
+    const payments = [...byDay.values()].sort((a, b) => compareText(a.payDate, b.payDate));
+    return { ...value, payments };
+}
+
+/** v0.2 形式（payDate を 1 つだけ持つ記録）を v0.4 形式に変換する。不正なら null。 */
 export function migrateLegacyRecord(value: unknown): DividendRecord | null {
     if (typeof value !== 'object' || value === null) return null;
     const r = value as Record<string, unknown>;
@@ -192,7 +243,7 @@ export function migrateLegacyRecord(value: unknown): DividendRecord | null {
         ticker,
         name,
         shares,
-        payments: [{ payDate, perShareCents, amount }],
+        payments: [{ payDate: payDate.substring(5), perShareCents, amount }],
         createdBy,
         createdAt,
         updatedAt: createdAt,
@@ -217,41 +268,105 @@ export function recordTotal(record: DividendRecord): number {
     return record.payments.reduce((sum, p) => sum + p.amount, 0);
 }
 
-export function yearlyTotals(records: DividendRecord[]): { year: string; total: number }[] {
-    const totals = new Map<string, number>();
+function toBreakdown(byOwner: Map<number, number>): Breakdown {
+    const owners = Array.from(byOwner, ([ownerId, total]) => ({ ownerId, total }))
+        .filter((o) => o.total > 0)
+        .sort((a, b) => a.ownerId - b.ownerId);
+    return { total: owners.reduce((sum, o) => sum + o.total, 0), owners };
+}
+
+/** 記録の 1 年分の受取額の合計と、保有者ごとの内訳。 */
+export function annualTotals(records: DividendRecord[]): Breakdown {
+    const byOwner = new Map<number, number>();
     for (const record of records) {
-        for (const payment of record.payments) {
-            const year = payment.payDate.substring(0, 4);
-            totals.set(year, (totals.get(year) ?? 0) + payment.amount);
-        }
+        byOwner.set(record.ownerId, (byOwner.get(record.ownerId) ?? 0) + recordTotal(record));
     }
-    return Array.from(totals, ([year, total]) => ({ year, total })).sort(
-        (a, b) => -compareText(a.year, b.year),
+    return toBreakdown(byOwner);
+}
+
+export function buildYearlyTotal(
+    records: DividendRecord[],
+    year: number,
+    registeredBy: number,
+    registeredAt: string,
+): YearlyTotal {
+    return { year, ...annualTotals(records), registeredBy, registeredAt };
+}
+
+function isValidYear(value: unknown): value is number {
+    return (
+        typeof value === 'number' &&
+        Number.isInteger(value) &&
+        value >= MIN_YEAR &&
+        value <= MAX_YEAR
     );
 }
 
-export interface MonthlyTotal {
-    month: number; // 1〜12
-    total: number; // 円
-    owners: { ownerId: number; total: number }[]; // ownerId の昇順。0 円の保有者は含めない
+export function isValidYearlyTotal(value: unknown): value is YearlyTotal {
+    if (typeof value !== 'object' || value === null) return false;
+    const t = value as Record<string, unknown>;
+    const { owners } = t;
+    if (!Array.isArray(owners)) return false;
+    let sum = 0;
+    let previous = 0;
+    for (const item of owners as unknown[]) {
+        if (typeof item !== 'object' || item === null) return false;
+        const { ownerId, total } = item as Record<string, unknown>;
+        if (!isPositiveInt(ownerId) || !isPositiveInt(total) || ownerId <= previous) return false;
+        previous = ownerId;
+        sum += total;
+    }
+    return (
+        isValidYear(t['year']) &&
+        t['total'] === sum &&
+        isPositiveInt(t['registeredBy']) &&
+        typeof t['registeredAt'] === 'string'
+    );
 }
 
-/** 指定した年（'YYYY'）の 1〜12 月それぞれの受取額の合計と、保有者ごとの内訳。 */
-export function monthlyTotals(records: DividendRecord[], year: string): MonthlyTotal[] {
+/** 'YYYY' を MIN_YEAR〜MAX_YEAR の整数にする。それ以外は null。 */
+export function parseYear(text: string): number | null {
+    if (!/^\d{4}$/.test(text)) return null;
+    const year = Number(text);
+    return isValidYear(year) ? year : null;
+}
+
+export interface MonthlyTotal extends Breakdown {
+    month: number; // 1〜12
+}
+
+/** 1〜12 月それぞれの受取額の合計（記録の 1 年分）と、保有者ごとの内訳。 */
+export function monthlyTotals(records: DividendRecord[]): MonthlyTotal[] {
     const byOwner = Array.from({ length: 12 }, () => new Map<number, number>());
     for (const record of records) {
         for (const payment of record.payments) {
-            if (payment.payDate.substring(0, 4) !== year) continue;
-            const owners = byOwner[Number(payment.payDate.substring(5, 7)) - 1];
+            const owners = byOwner[Number(payment.payDate.substring(0, 2)) - 1];
             if (!owners) continue;
             owners.set(record.ownerId, (owners.get(record.ownerId) ?? 0) + payment.amount);
         }
     }
-    return byOwner.map((owners, i) => {
-        const list = Array.from(owners, ([ownerId, total]) => ({ ownerId, total }))
-            .filter((o) => o.total > 0)
-            .sort((a, b) => a.ownerId - b.ownerId);
-        return { month: i + 1, total: list.reduce((sum, o) => sum + o.total, 0), owners: list };
+    return byOwner.map((owners, i) => ({ month: i + 1, ...toBreakdown(owners) }));
+}
+
+export interface YearlyBar extends Breakdown {
+    year: number;
+}
+
+/**
+ * 年別グラフ用。endYear までの CHART_YEARS 年分を年の昇順で返す。登録の無い年は 0 円。
+ * ownerId が null でなければ、その保有者の分だけにする。
+ */
+export function yearlyChart(
+    totals: YearlyTotal[],
+    endYear: number,
+    ownerId: number | null,
+): YearlyBar[] {
+    return Array.from({ length: CHART_YEARS }, (_, i) => {
+        const year = endYear - CHART_YEARS + 1 + i;
+        const owners = (totals.find((t) => t.year === year)?.owners ?? [])
+            .filter((o) => ownerId === null || o.ownerId === ownerId)
+            .map((o) => ({ ...o }));
+        return { year, total: owners.reduce((sum, o) => sum + o.total, 0), owners };
     });
 }
 

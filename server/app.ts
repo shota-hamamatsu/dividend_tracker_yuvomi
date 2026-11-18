@@ -6,7 +6,9 @@ import {
     type RecordInput,
     MAX_PAYMENTS,
     buildPayments,
+    buildYearlyTotal,
     parseShares,
+    parseYear,
     validateInput,
 } from '../src/logic.ts';
 import type { Store } from './store.ts';
@@ -165,6 +167,7 @@ export function createHandler(deps: Deps) {
             200,
             {
                 data: deps.store.list(),
+                yearlyTotals: deps.store.listYearlyTotals(),
                 me: { id: me.id, isAdmin: me.isAdmin, canWrite: me.access === 'write' },
                 csrfToken: token,
             },
@@ -282,6 +285,25 @@ export function createHandler(deps: Deps) {
         send(res, 200, { data: { id, deleted: true } });
     };
 
+    /** その年の配当合計を、保存されている全員分の記録から計算して登録する（本文は読まない）。 */
+    const registerYearlyTotal = async (
+        req: IncomingMessage,
+        res: ServerResponse,
+        yearText: string,
+    ): Promise<void> => {
+        const { me, cookie } = await authenticate(req);
+        checkWrite(req, me, cookie);
+        const year = parseYear(yearText);
+        if (year === null) throw new HttpError(400, 'invalid', '年は2000〜2100で指定してください');
+        const total = buildYearlyTotal(deps.store.list(), year, me.id, new Date().toISOString());
+        try {
+            await deps.store.putYearlyTotal(total);
+        } catch {
+            throw new HttpError(500, 'save_failed', '保存できませんでした');
+        }
+        send(res, 200, { data: total });
+    };
+
     return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
         try {
             const path = new URL(req.url ?? '/', 'http://localhost').pathname.replace(/\/+$/, '');
@@ -298,9 +320,15 @@ export function createHandler(deps: Deps) {
                 if (method === 'POST') return await addRecord(req, res);
                 throw new HttpError(405, 'method', '許可されていない操作です');
             }
-            const match = /^\/records\/([^/]+)$/.exec(
-                path.startsWith(PREFIX) ? path.slice(PREFIX.length) : '',
-            );
+            const rest = path.startsWith(PREFIX) ? path.slice(PREFIX.length) : '';
+            const yearMatch = /^\/yearly-totals\/([^/]+)$/.exec(rest);
+            if (yearMatch?.[1]) {
+                if (method === 'PUT') {
+                    return await registerYearlyTotal(req, res, decodeURIComponent(yearMatch[1]));
+                }
+                throw new HttpError(405, 'method', '許可されていない操作です');
+            }
+            const match = /^\/records\/([^/]+)$/.exec(rest);
             if (match?.[1]) {
                 const id = decodeURIComponent(match[1]);
                 if (method === 'PUT') return await updateRecord(req, res, id);

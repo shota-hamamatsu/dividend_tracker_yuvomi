@@ -1,4 +1,4 @@
-# 仕様: 画面確認用の開発ページ（dev/）v0.3
+# 仕様: 画面確認用の開発ページ（dev/）v0.4
 
 `src/index.ts` を yuvomi 本体なしでブラウザ表示し、見た目と挙動を確認するための開発専用ページ。
 本番の成果物（`modules/`、`server/`）には含めない。`npm run dev` で起動する（Vite 開発サーバー）。
@@ -34,13 +34,15 @@ TypeScript（strict）。`enum` / `namespace` / デコレータは使わない�
 
 ## 偽の記録 API（`dev/mock-records.ts`）
 
-- `installMockFetch(scenario)`: `window.fetch` を差し替える。URL が `/api/extensions/dividend-tracker/records` で始まるものだけ処理し、それ以外は元の `fetch` へ渡す。
-- GET: `200 { data: records, me: { id, isAdmin, canWrite }, csrfToken: 'dev-token' }`。`error` は `500 { error: '開発用: 取得エラー' }`、`slow` は 2 秒待ってから通常応答。
+- `installMockFetch(scenario)`: `window.fetch` を差し替える。URL が `/api/extensions/dividend-tracker/` で始まるもの（`/records`・`/yearly-totals`）だけ処理し、それ以外は元の `fetch` へ渡す。
+- 初期データの受取日は月日（`MM-DD`）。`empty` 以外は、今年の 1〜5 年前の登録済み年別合計も持つ（v0.4 で追加）。
+- GET: `200 { data: records, yearlyTotals, me: { id, isAdmin, canWrite }, csrfToken: 'dev-token' }`。`error` は `500 { error: '開発用: 取得エラー' }`、`slow` は 2 秒待ってから通常応答。
 - POST: ヘッダー `X-DT-CSRF` が `dev-token` でなければ `403 { error: '画面を再読み込みしてから、もう一度お試しください' }`。`me.canWrite` が false なら `403 { error: '書き込み権限がありません' }`。
   一般ユーザーで `ownerId` が自分以外なら `403 { error: '自分の記録だけ追加できます' }`。
   OK なら、本文に `id`（連番の文字列）を付けた記録を保存して `201 { data: record }`。保存先はメモリ上の配列のみ（再描画・再読み込みで初期データに戻る）。
   本文（v0.3 の `RecordInput`）は `validateInput` で検証し、エラーなら `400 { error }`。受取額は `buildPayments` で計算する。
 - PUT `/records/<id>`（v0.2 で追加）: POST と同じ検証のあと、該当なしは `404 { error: '記録が見つかりません' }`、一般ユーザーが他人の記録なら `403`。OK なら `id`・`createdBy`・`createdAt` を残して置き換え、`200 { data: record }`。
+- PUT `/yearly-totals/<year>`（v0.4 で追加）: CSRF・`canWrite` の確認は POST と同じ。`parseYear` が null なら `400`。OK なら `buildYearlyTotal(records, year, me.id, 現在時刻)` で同じ年を置き換え（無ければ追加）、`200 { data }`。
 - DELETE `/records/<id>`（v0.3 で追加）: CSRF・`canWrite` の確認は POST と同じ。該当なしは `404 { error: '記録が見つかりません' }`、一般ユーザーが他人の記録なら `403 { error: '自分の記録だけ削除できます' }`。OK なら配列から除いて `200 { data: { id, deleted: true } }`。
 - 記録の形は `src/logic.ts` の `DividendRecord` に従う（`import type`）。初期データは 2024 年と 2025 年にまたがる 4 件程度（受取日を複数持つ記録を含む）、保有者は 1〜3 に散らす。
 - `AbortSignal` が中断済みなら `DOMException('Aborted', 'AbortError')` で reject する。

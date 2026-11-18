@@ -1,4 +1,6 @@
-# 仕様: 配当管理サイドカー（server/）v0.3
+# 仕様: 配当管理サイドカー（server/）v0.4
+
+v0.4 の変更点: 受取日を月日（`MM-DD`）にする（`docs/specs/dividend-tracker-logic.md` v0.4）。年ごとの配当合計の登録（`PUT /yearly-totals/<year>`）を追加。保存ファイルを version 3 にし、version 1・2 を読み込み時に移行する。
 
 v0.3 の変更点: 記録が受取日を複数持つ（`docs/specs/dividend-tracker-logic.md` v0.3）。記録の編集（PUT）を追加。保存ファイルを version 2 にし、version 1 を読み込み時に移行する。
 
@@ -38,7 +40,7 @@ yuvomi の `MODULES.md`「Modules With A Backend Service」の要件に従う。
 3. 権限が `'none'` なら 403。値が無い場合は `'write'` 扱い（yuvomi の既定はフルアクセス）。
 4. ユーザー id・役割をリクエスト本文から受け取らない。
 
-### 書き込み（POST / PUT / DELETE）の追加条件
+### 書き込み（POST / PUT / DELETE、年別合計の登録を含む）の追加条件
 
 - `Origin` ヘッダーが `PUBLIC_ORIGIN` と完全一致しなければ 403。
 - CSRF（二重送信）: Cookie `dt_csrf` とヘッダー `X-DT-CSRF` が両方あり一致しなければ 403。比較は `timingSafeEqual`。
@@ -50,7 +52,7 @@ yuvomi の `MODULES.md`「Modules With A Backend Service」の要件に従う。
 
 ### `GET /api/extensions/dividend-tracker/records`
 
-- 200 `{ data: DividendRecord[], me: { id, isAdmin, canWrite }, csrfToken }`。全員分を返す（閲覧は全員可）。
+- 200 `{ data: DividendRecord[], yearlyTotals: YearlyTotal[], me: { id, isAdmin, canWrite }, csrfToken }`。全員分を返す（閲覧は全員可）。`yearlyTotals` は年の昇順。
 - `dt_csrf` Cookie が無い・形式不正（32 バイト乱数の hex 64 文字でない）なら新規発行して `Set-Cookie`:
   `dt_csrf=<token>; Path=/api/extensions/dividend-tracker; HttpOnly; SameSite=Strict`（`PUBLIC_ORIGIN` が https なら `; Secure`）。
   `csrfToken` には Cookie と同じ値を入れる。
@@ -82,16 +84,29 @@ yuvomi の `MODULES.md`「Modules With A Backend Service」の要件に従う。
 - 該当なし 404。管理者でなく `record.ownerId !== me.id` なら 403 `'自分以外の記録は管理者だけが削除できます'`。
 - 200 `{ data: { id, deleted: true } }`。
 
+### `PUT /api/extensions/dividend-tracker/yearly-totals/<year>`
+
+- その年の配当合計を、**保存されている全員分の記録** から計算して登録する。同じ年が登録済みなら置き換える（上書きの確認は画面で行う）。
+- 本文は読まない（金額をブラウザから受け取らない）。
+- `<year>` が `parseYear` で null なら 400 `'年は2000〜2100で指定してください'`。
+- 書き込みの追加条件（Origin・CSRF・write 権限）を満たすこと。管理者でなくてもよい（記録は家族で共有しているため）。
+- 保存する値: `buildYearlyTotal(store.list(), year, me.id, new Date().toISOString())`。
+- 200 `{ data: YearlyTotal }`。
+
 ### その他
 
-- パスが一致しなければ 404、メソッドが違えば 405（`/records` は GET・POST、`/records/<id>` は PUT・DELETE）。
+- パスが一致しなければ 404、メソッドが違えば 405（`/records` は GET・POST、`/records/<id>` は PUT・DELETE、`/yearly-totals/<year>` は PUT）。
 - `GET /api/extensions/dividend-tracker/health` は認証なしで 200 `{ ok: true }`（コンテナのヘルスチェック用。データは返さない）。
 
 ## 保存（store.ts）
 
-- `{DATA_DIR}/records.json` に `{ "version": 2, "records": [...] }`。ファイルが無ければ空。
-- 起動時に読む。`version` が 2 なら `isValidRecord` を満たすものだけ使う。`version` が 1 なら各要素を `migrateLegacyRecord` で変換し、null でないものだけ使う（ファイルは次の書き込み時に version 2 で書き直される）。それ以外の version は空として扱わず、起動を失敗させる（例外）。
-- `Store` は `list()`・`get(id)`・`add(record)`・`update(record): Promise<boolean>`（同じ id を置き換える。無ければ false）・`remove(id)`。
+- `{DATA_DIR}/records.json` に `{ "version": 3, "records": [...], "yearlyTotals": [...] }`。ファイルが無ければ空。
+- 起動時に読む。
+  - `version` が 3 なら `isValidRecord` を満たす記録と、`isValidYearlyTotal` を満たす年別合計だけ使う（同じ年が複数あれば後のもの）。
+  - `version` が 2 なら各記録を `migrateV3Record` で、`version` が 1 なら `migrateLegacyRecord` で変換し、null でないものだけ使う。年別合計は空。
+  - ファイルは次の書き込み時に version 3 で書き直される。それ以外の version は空として扱わず、起動を失敗させる（例外）。
+- `Store` は `list()`・`get(id)`・`add(record)`・`update(record): Promise<boolean>`（同じ id を置き換える。無ければ false）・`remove(id)`、
+  `listYearlyTotals()`（年の昇順）・`putYearlyTotal(total)`（同じ年を置き換え、無ければ追加）。
 - 書き込みは一時ファイル → `rename` で置き換え。同時書き込みは Promise チェーンで直列化する。
 - メモリ上の配列を正とし、書き込み失敗時は変更を元に戻して 500 `'保存できませんでした'`。
 
@@ -101,5 +116,6 @@ yuvomi の `MODULES.md`「Modules With A Backend Service」の要件に従う。
 - GET が全員分と `me`・`csrfToken` を返し、`Set-Cookie` を付ける。
 - POST: Origin 不一致 403、CSRF 不一致 403、read 権限 403、検証エラー 400、家族以外の ownerId 400、非管理者が他人の ownerId 403、管理者は他人の分を追加できる、amount はサーバーが計算する（本文の amount は無視）。
 - PUT: 非管理者が他人の記録 403、非管理者が保有者を他人に変える 403、本人は編集可（`createdAt` は変わらず `updatedAt` が変わる）、管理者は他人の記録も編集可、存在しない id 404、検証エラー 400。
-- store: version 1 のファイルを移行して読み込み、書き込み後は version 2 になる。
+- store: version 1・2 のファイルを移行して読み込み、書き込み後は version 3 になる。年別合計を保存・置き換えでき、再起動後も読める。
+- 年別合計: GET が `yearlyTotals` を返す。PUT がサーバーの記録から計算して登録する（本文の金額は使わない）、同じ年は置き換える、不正な年 400、Origin・CSRF 不一致 403、read 権限 403、非管理者の write 権限は登録できる。
 - DELETE: 非管理者が他人の記録 403、本人は削除可、管理者は他人の記録も削除可、存在しない id 404。

@@ -1,15 +1,20 @@
 import {
     buildPayments,
+    buildYearlyTotal,
     parseShares,
+    parseYear,
     validateInput,
     type DividendRecord,
     type RecordInput,
+    type YearlyTotal,
 } from '../src/logic.ts';
 
 export const SCENARIOS = ['admin', 'member', 'viewer', 'empty', 'error', 'slow'] as const;
 export type Scenario = (typeof SCENARIOS)[number];
 
-const ENDPOINT = '/api/extensions/dividend-tracker/records';
+const BASE = '/api/extensions/dividend-tracker';
+const ENDPOINT = `${BASE}/records`;
+const YEARLY_ENDPOINT = `${BASE}/yearly-totals`;
 const TOKEN = 'dev-token';
 
 const rec = (
@@ -36,22 +41,38 @@ const rec = (
 
 const seed = (): DividendRecord[] => [
     rec('1', 1, '7203', 'トヨタ自動車', 100, [
-        ['2024-06-03', '45'],
-        ['2024-11-27', '45'],
-        ['2025-06-02', '50'],
-        ['2025-11-26', '45'],
+        ['06-02', '50'],
+        ['11-26', '45'],
     ]),
     rec('2', 2, '9432', 'NTT', 1000, [
-        ['2024-06-24', '2.6'],
-        ['2024-12-09', '2.6'],
-        ['2025-06-23', '2.65'],
+        ['06-23', '2.65'],
+        ['12-09', '2.6'],
     ]),
     rec('3', 3, '8058', '三菱商事', 200, [
-        ['2025-03-31', '56'],
-        ['2025-09-30', '60'],
+        ['03-31', '56'],
+        ['09-30', '60'],
     ]),
-    rec('4', 2, '8306', '三菱UFJ', 300, [['2025-06-27', '32.5']]),
+    rec('4', 2, '8306', '三菱UFJ', 300, [['06-27', '32.5']]),
 ];
+
+/** 過去の年の登録済み合計（今年の 1〜5 年前）。保有者 3 は 3 年前から。 */
+const seedYearlyTotals = (): YearlyTotal[] => {
+    const thisYear = new Date().getFullYear();
+    return [5, 4, 3, 2, 1].map((ago) => {
+        const owners = [
+            { ownerId: 1, total: 9000 - ago * 200 },
+            { ownerId: 2, total: 12000 - ago * 500 },
+            ...(ago <= 3 ? [{ ownerId: 3, total: 20000 - ago * 1500 }] : []),
+        ];
+        return {
+            year: thisYear - ago,
+            total: owners.reduce((sum, o) => sum + o.total, 0),
+            owners,
+            registeredBy: 1,
+            registeredAt: `${thisYear - ago}-12-31T00:00:00.000Z`,
+        };
+    });
+};
 
 const json = (status: number, body: unknown): Response =>
     new Response(JSON.stringify(body), {
@@ -78,6 +99,7 @@ const realFetch = window.fetch.bind(window);
 
 export function installMockFetch(scenario: Scenario): void {
     const records = scenario === 'empty' ? [] : seed();
+    let yearlyTotals = scenario === 'empty' ? [] : seedYearlyTotals();
     let nextId = records.length + 1;
     const me = {
         id: scenario === 'member' || scenario === 'viewer' ? 2 : 1,
@@ -88,7 +110,7 @@ export function installMockFetch(scenario: Scenario): void {
     window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
         const url =
             typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-        if (!url.startsWith(ENDPOINT)) return realFetch(input, init);
+        if (!url.startsWith(`${BASE}/`)) return realFetch(input, init);
         const signal = init?.signal ?? undefined;
         if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
         const method = init?.method ?? 'GET';
@@ -96,7 +118,7 @@ export function installMockFetch(scenario: Scenario): void {
         if (method === 'GET') {
             if (scenario === 'slow') await sleep(2000, signal);
             if (scenario === 'error') return json(500, { error: '開発用: 取得エラー' });
-            return json(200, { data: records, me, csrfToken: TOKEN });
+            return json(200, { data: records, yearlyTotals, me, csrfToken: TOKEN });
         }
 
         const headers = new Headers(init?.headers);
@@ -104,6 +126,16 @@ export function installMockFetch(scenario: Scenario): void {
             return json(403, { error: '画面を再読み込みしてから、もう一度お試しください' });
         }
         if (!me.canWrite) return json(403, { error: '書き込み権限がありません' });
+
+        if (url.startsWith(`${YEARLY_ENDPOINT}/`)) {
+            const year = parseYear(decodeURIComponent(url.slice(YEARLY_ENDPOINT.length + 1)));
+            if (year === null) return json(400, { error: '年は2000〜2100で指定してください' });
+            const total = buildYearlyTotal(records, year, me.id, new Date().toISOString());
+            yearlyTotals = [...yearlyTotals.filter((t) => t.year !== year), total].sort(
+                (a, b) => a.year - b.year,
+            );
+            return json(200, { data: total });
+        }
 
         if (method === 'DELETE') {
             const id = decodeURIComponent(url.slice(ENDPOINT.length + 1));
