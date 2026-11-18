@@ -60,16 +60,8 @@ function yearlyTotals(records) {
 		total
 	})).sort((a, b) => a.year < b.year ? 1 : a.year > b.year ? -1 : 0);
 }
-function sortByPayDateDesc(records) {
-	return [...records].sort((a, b) => a.payDate < b.payDate ? 1 : a.payDate > b.payDate ? -1 : 0);
-}
 function formatYen(amount) {
 	return groupDigits(String(amount)) + "円";
-}
-function formatPerShare(cents) {
-	const yen = groupDigits(String(Math.trunc(cents / 100)));
-	const fraction = String(cents % 100).padStart(2, "0").replace(/0+$/, "");
-	return fraction === "" ? `${yen}円` : `${yen}.${fraction}円`;
 }
 // src/index.ts
 var ENDPOINT = "/api/extensions/dividend-tracker/records";
@@ -130,7 +122,6 @@ async function render(container, context) {
 	let errorEl = el("p", "dt-error");
 	let submitEl = null;
 	const memberName = (id) => members.get(id) ?? UNKNOWN_USER;
-	const canDelete = (r) => me.canWrite && (me.isAdmin || r.ownerId === me.id);
 	const request = (method, url, body) => fetch(url, {
 		method,
 		credentials: "same-origin",
@@ -167,46 +158,6 @@ async function render(container, context) {
 		section.appendChild(ul);
 		return section;
 	};
-	const buildList = (visible) => {
-		const section = el("section", "page-section");
-		section.appendChild(el("h2", void 0, "受取履歴"));
-		if (visible.length === 0) {
-			section.appendChild(el("p", void 0, EMPTY_TEXT));
-			return section;
-		}
-		const headRow = el("tr");
-		for (const [text, numeric] of [
-			["受取日", false],
-			["保有者", false],
-			["銘柄", false],
-			["銘柄名", false],
-			["保有株数", true],
-			["1株配当", true],
-			["受取額", true],
-			["操作", false]
-		]) headRow.appendChild(el("th", numeric ? "dt-num" : void 0, text));
-		const thead = el("thead");
-		thead.appendChild(headRow);
-		const tbody = el("tbody");
-		for (const rec of sortByPayDateDesc(visible)) {
-			const row = el("tr");
-			row.append(el("td", void 0, rec.payDate), el("td", void 0, memberName(rec.ownerId)), el("td", void 0, rec.ticker), el("td", void 0, rec.name), el("td", "dt-num", formatYen(rec.shares).replace(/円$/, "株")), el("td", "dt-num", formatPerShare(rec.perShareCents)), el("td", "dt-num", formatYen(rec.amount)));
-			const cell = el("td");
-			if (canDelete(rec)) {
-				const del = el("button", void 0, "削除");
-				del.type = "button";
-				del.dataset["action"] = "delete";
-				del.dataset["id"] = rec.id;
-				cell.appendChild(del);
-			}
-			row.appendChild(cell);
-			tbody.appendChild(row);
-		}
-		const table = el("table", "dt-table");
-		table.append(thead, tbody);
-		section.appendChild(table);
-		return section;
-	};
 	const buildForm = () => {
 		const section = el("section", "page-section");
 		section.appendChild(el("h2", void 0, "配当を追加"));
@@ -236,7 +187,7 @@ async function render(container, context) {
 	};
 	const draw = (message = "") => {
 		const visible = filterByOwner(records, filter);
-		shell(buildTotals(visible), buildList(visible), buildForm());
+		shell(buildTotals(visible), buildForm());
 		errorEl.textContent = message;
 	};
 	const showFailure = (message = "データを読み込めませんでした") => {
@@ -323,24 +274,7 @@ async function render(container, context) {
 	}, { signal });
 	container.addEventListener("click", async (e) => {
 		if (!(e.target instanceof Element)) return;
-		if (e.target.closest("[data-action=\"reload\"]")) {
-			await load();
-			return;
-		}
-		const id = e.target.closest("[data-action=\"delete\"]")?.dataset["id"];
-		if (!id || !confirm("この記録を削除しますか？")) return;
-		try {
-			const res = await request("DELETE", `${ENDPOINT}/${encodeURIComponent(id)}`);
-			if (signal.aborted) return;
-			if (!res.ok) {
-				errorEl.textContent = await errorMessage(res, "削除できませんでした");
-				return;
-			}
-			records = records.filter((r) => r.id !== id);
-			draw();
-		} catch {
-			if (!signal.aborted) errorEl.textContent = "削除できませんでした";
-		}
+		if (e.target.closest("[data-action=\"reload\"]")) await load();
 	}, { signal });
 	await load();
 }

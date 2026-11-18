@@ -2,10 +2,8 @@ import { api } from '/api.js';
 import {
     type DividendRecord,
     filterByOwner,
-    formatPerShare,
     formatYen,
     isValidRecord,
-    sortByPayDateDesc,
     validateInput,
     yearlyTotals,
 } from './logic.ts';
@@ -87,10 +85,8 @@ export async function render(
     let submitEl: HTMLButtonElement | null = null;
 
     const memberName = (id: number): string => members.get(id) ?? UNKNOWN_USER;
-    const canDelete = (r: DividendRecord): boolean =>
-        me.canWrite && (me.isAdmin || r.ownerId === me.id);
 
-    const request = (method: 'POST' | 'DELETE', url: string, body?: unknown): Promise<Response> =>
+    const request = (method: 'POST', url: string, body?: unknown): Promise<Response> =>
         fetch(url, {
             method,
             credentials: 'same-origin',
@@ -136,58 +132,6 @@ export async function render(
         return section;
     };
 
-    const buildList = (visible: DividendRecord[]): HTMLElement => {
-        const section = el('section', 'page-section');
-        section.appendChild(el('h2', undefined, '受取履歴'));
-        if (visible.length === 0) {
-            section.appendChild(el('p', undefined, EMPTY_TEXT));
-            return section;
-        }
-        const headRow = el('tr');
-        for (const [text, numeric] of [
-            ['受取日', false],
-            ['保有者', false],
-            ['銘柄', false],
-            ['銘柄名', false],
-            ['保有株数', true],
-            ['1株配当', true],
-            ['受取額', true],
-            ['操作', false],
-        ] as const) {
-            headRow.appendChild(el('th', numeric ? 'dt-num' : undefined, text));
-        }
-        const thead = el('thead');
-        thead.appendChild(headRow);
-
-        const tbody = el('tbody');
-        for (const rec of sortByPayDateDesc(visible)) {
-            const row = el('tr');
-            row.append(
-                el('td', undefined, rec.payDate),
-                el('td', undefined, memberName(rec.ownerId)),
-                el('td', undefined, rec.ticker),
-                el('td', undefined, rec.name),
-                el('td', 'dt-num', formatYen(rec.shares).replace(/円$/, '株')),
-                el('td', 'dt-num', formatPerShare(rec.perShareCents)),
-                el('td', 'dt-num', formatYen(rec.amount)),
-            );
-            const cell = el('td');
-            if (canDelete(rec)) {
-                const del = el('button', undefined, '削除');
-                del.type = 'button';
-                del.dataset['action'] = 'delete';
-                del.dataset['id'] = rec.id;
-                cell.appendChild(del);
-            }
-            row.appendChild(cell);
-            tbody.appendChild(row);
-        }
-        const table = el('table', 'dt-table');
-        table.append(thead, tbody);
-        section.appendChild(table);
-        return section;
-    };
-
     const buildForm = (): HTMLElement => {
         const section = el('section', 'page-section');
         section.appendChild(el('h2', undefined, '配当を追加'));
@@ -230,7 +174,7 @@ export async function render(
 
     const draw = (message = ''): void => {
         const visible = filterByOwner(records, filter);
-        shell(buildTotals(visible), buildList(visible), buildForm());
+        shell(buildTotals(visible), buildForm());
         errorEl.textContent = message;
     };
 
@@ -335,25 +279,7 @@ export async function render(
         'click',
         async (e) => {
             if (!(e.target instanceof Element)) return;
-            if (e.target.closest('[data-action="reload"]')) {
-                await load();
-                return;
-            }
-            const button = e.target.closest<HTMLElement>('[data-action="delete"]');
-            const id = button?.dataset['id'];
-            if (!id || !confirm('この記録を削除しますか？')) return;
-            try {
-                const res = await request('DELETE', `${ENDPOINT}/${encodeURIComponent(id)}`);
-                if (signal.aborted) return;
-                if (!res.ok) {
-                    errorEl.textContent = await errorMessage(res, '削除できませんでした');
-                    return;
-                }
-                records = records.filter((r) => r.id !== id);
-                draw();
-            } catch {
-                if (!signal.aborted) errorEl.textContent = '削除できませんでした';
-            }
+            if (e.target.closest('[data-action="reload"]')) await load();
         },
         { signal },
     );
