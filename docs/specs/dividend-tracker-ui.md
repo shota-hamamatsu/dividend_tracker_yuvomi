@@ -1,4 +1,4 @@
-# 仕様: 配当管理の画面（src/index.ts）v0.5
+# 仕様: 配当管理の画面（src/index.ts）v0.6
 
 yuvomi のモジュールのエントリ。TypeScript（strict）。`enum` / `namespace` / デコレータは使わない。
 データはサイドカー（`docs/specs/dividend-tracker-sidecar.md` v0.3）に保存し、localStorage は使わない。
@@ -8,6 +8,8 @@ v0.3 の変更点: 1 記録に受取日を複数持てる。記録の一覧を�
 画面下部に置いていた追加フォームは廃止する。
 
 v0.4 の変更点: 銘柄一覧の一番左に削除ボタンを追加（`DELETE /records/<id>`）。ダイアログの入力欄の並びを変更（1 段目: 保有者、2 段目: 銘柄コード・銘柄名、3 段目: 保有株数）。
+
+v0.6 の変更点: ダイアログの保有者を保有株数の下に移す（1 段目: 銘柄コード・銘柄名、2 段目: 保有株数、3 段目: 保有者）。月別配当額のグラフは `docs/specs/dividend-tracker-monthly-chart.md` v0.2 に従う。
 
 v0.5 の変更点: 一覧の削除ボタンを × アイコンのボタンにする。一覧は横スクロールさせない（受取日・銘柄は折り返す）。
 
@@ -64,9 +66,9 @@ export async function render(
 - 見出し `h2`: 新規は「配当を追加」、編集は「配当を編集」。
 - `form.dt-form`（`method="dialog"` は使わない。送信は下記の `submit` で処理）:
   - 入力欄は次の順で並べる（`form.dt-form` は 2 列の grid）:
-    - 1 段目（2 列ぶち抜き、`label.dt-field--wide`）: 保有者 `select[name=ownerId]`。管理者は家族全員、それ以外は自分だけ。初期値は新規なら自分、編集なら記録の `ownerId`（家族にいなければ「（不明なユーザー）」の選択肢を追加して選ぶ）。
-    - 2 段目: 左に銘柄コード（text, name=ticker）、右に銘柄名（text, name=name、任意）。
-    - 3 段目（`label.dt-field--shares`、左の列だけ）: 保有株数（number, name=shares, min=1, step=1）。
+    - 1 段目: 左に銘柄コード（text, name=ticker）、右に銘柄名（text, name=name、任意）。
+    - 2 段目（`label.dt-field--shares`、左の列だけ）: 保有株数（number, name=shares, min=1, step=1）。
+    - 3 段目（2 列ぶち抜き、`label.dt-field--wide`）: 保有者 `select[name=ownerId]`。管理者は家族全員、それ以外は自分だけ。初期値は新規なら自分、編集なら記録の `ownerId`（家族にいなければ「（不明なユーザー）」の選択肢を追加して選ぶ）。
     - 編集時は記録の値を入れる。
   - `fieldset.dt-payments` > `legend`「受取日と1株当たり配当」。受取日の行 `div.dt-payment` を並べる。各行:
     - 受取日（date, name=payDate）、1株当たり配当（円）（text, name=perShare, inputmode=decimal）、`button[data-action="remove-payment"]`「削除」（type=button）。

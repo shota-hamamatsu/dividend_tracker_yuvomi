@@ -211,6 +211,76 @@
 }
 
 /* 月別配当額 */
+
+/* 保有者の色（家族一覧の順に 1〜8）。隣り合う色の区別は色覚多様性の検査をライト・ダークとも通過済み。
+   ライトの 3・4・5 は背景とのコントラストが 3:1 未満のため、凡例に名前と金額を必ず出す。 */
+.dt-chart-wrap {
+  position: relative;
+  --dt-owner-1: #2a78d6;
+  --dt-owner-2: #eb6834;
+  --dt-owner-3: #1baf7a;
+  --dt-owner-4: #eda100;
+  --dt-owner-5: #e87ba4;
+  --dt-owner-6: #008300;
+  --dt-owner-7: #6250d6;
+  --dt-owner-8: #e34948;
+  --dt-owner-other: #8a8f98;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme='light'])) .dt-chart-wrap {
+  --dt-owner-1: #3987e5;
+  --dt-owner-2: #d95926;
+  --dt-owner-3: #199e70;
+  --dt-owner-4: #c98500;
+  --dt-owner-5: #d55181;
+  --dt-owner-6: #0ca30c;
+  --dt-owner-7: #9085e9;
+  --dt-owner-8: #e66767;
+  --dt-owner-other: #7d838d;
+  }
+}
+
+:root[data-theme='dark'] .dt-chart-wrap {
+  --dt-owner-1: #3987e5;
+  --dt-owner-2: #d95926;
+  --dt-owner-3: #199e70;
+  --dt-owner-4: #c98500;
+  --dt-owner-5: #d55181;
+  --dt-owner-6: #0ca30c;
+  --dt-owner-7: #9085e9;
+  --dt-owner-8: #e66767;
+  --dt-owner-other: #7d838d;
+}
+
+.dt-owner-color-1 {
+  background: var(--dt-owner-1);
+}
+.dt-owner-color-2 {
+  background: var(--dt-owner-2);
+}
+.dt-owner-color-3 {
+  background: var(--dt-owner-3);
+}
+.dt-owner-color-4 {
+  background: var(--dt-owner-4);
+}
+.dt-owner-color-5 {
+  background: var(--dt-owner-5);
+}
+.dt-owner-color-6 {
+  background: var(--dt-owner-6);
+}
+.dt-owner-color-7 {
+  background: var(--dt-owner-7);
+}
+.dt-owner-color-8 {
+  background: var(--dt-owner-8);
+}
+.dt-owner-color-other {
+  background: var(--dt-owner-other);
+}
+
 .dt-chart {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
@@ -236,9 +306,71 @@
 }
 
 .dt-chart__bar {
+  display: flex;
+  flex-direction: column-reverse; /* 先頭の区間（色の番号が小さい保有者）が一番下 */
+  gap: 2px;
   width: 100%;
-  border-radius: 0.25rem 0.25rem 0 0;
-  background: var(--color-btn-primary, #6c3aed);
+  overflow: hidden;
+  border-radius: 4px 4px 0 0;
+}
+
+.dt-chart__segment {
+  flex-basis: 0;
+  min-height: 2px;
+  cursor: default;
+}
+
+.dt-chart__segment:hover {
+  filter: brightness(1.1);
+}
+
+.dt-tooltip {
+  position: absolute;
+  z-index: 1;
+  display: grid;
+  gap: 2px;
+  padding: var(--space-1, 0.25rem) var(--space-2, 0.5rem);
+  border-radius: 0.375rem;
+  background: var(--color-text-primary, #1a1a1a);
+  color: var(--color-bg, #fff);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.2);
+  font-size: var(--type-caption, 0.8125rem);
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translate(-50%, calc(-100% - 6px));
+}
+
+.dt-tooltip[hidden] {
+  display: none;
+}
+
+.dt-tooltip__amount {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.dt-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1, 0.25rem) var(--space-4, 1rem);
+  margin: var(--space-3, 0.75rem) 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--type-caption, 0.8125rem);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-secondary);
+}
+
+.dt-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1, 0.25rem);
+}
+
+.dt-legend__swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
 }
 
 .dt-chart__value,

@@ -17,6 +17,7 @@ import {
 const ENDPOINT = '/api/extensions/dividend-tracker/records';
 const EMPTY_TEXT = 'まだ記録がありません';
 const UNKNOWN_USER = '（不明なユーザー）';
+const OWNER_COLORS = 8; // style.css の --dt-owner-1〜8
 
 interface Me {
     id: number;
@@ -127,6 +128,15 @@ export async function render(
     let editing: DividendRecord | null = null;
 
     const memberName = (id: number): string => members.get(id) ?? UNKNOWN_USER;
+    /** 保有者の色の番号。家族一覧の取得順で 1〜OWNER_COLORS、それ以外は OWNER_COLORS + 1（other）。 */
+    const colorSlot = (ownerId: number): number => {
+        const index = [...members.keys()].indexOf(ownerId);
+        return index >= 0 && index < OWNER_COLORS ? index + 1 : OWNER_COLORS + 1;
+    };
+    const colorClass = (ownerId: number): string => {
+        const slot = colorSlot(ownerId);
+        return `dt-owner-color-${slot > OWNER_COLORS ? 'other' : slot}`;
+    };
     const canEdit = (record: DividendRecord): boolean =>
         me.canWrite && (me.isAdmin || record.ownerId === me.id);
 
@@ -268,17 +278,33 @@ export async function render(
 
         const months = monthlyTotals(visible, year);
         const max = Math.max(...months.map((m) => m.total));
+        const byColor = (a: { ownerId: number }, b: { ownerId: number }): number =>
+            colorSlot(a.ownerId) - colorSlot(b.ownerId);
+
+        const wrap = el('div', 'dt-chart-wrap');
         const chart = el('ol', 'dt-chart');
         chart.setAttribute('aria-label', `${year}年の月別配当額`);
-        for (const { month, total } of months) {
+        const yearByOwner = new Map<number, number>();
+        for (const { month, total, owners } of months) {
+            const sorted = [...owners].sort(byColor);
             const item = el('li', 'dt-chart__month');
+            const breakdown = sorted
+                .map((o) => `${memberName(o.ownerId)} ${formatYen(o.total)}`)
+                .join('、');
             const text = `${month}月: ${formatYen(total)}`;
-            item.title = text;
-            item.setAttribute('aria-label', text);
+            item.setAttribute('aria-label', breakdown === '' ? text : `${text}（${breakdown}）`);
             const track = el('div', 'dt-chart__track');
             const bar = el('div', 'dt-chart__bar');
             // 表示用の比率。金額の計算には使わない
             bar.style.height = `${max > 0 ? (total / max) * 100 : 0}%`;
+            for (const o of sorted) {
+                const segment = el('div', `dt-chart__segment ${colorClass(o.ownerId)}`);
+                segment.style.flexGrow = String(o.total);
+                segment.dataset['tooltip'] = `${memberName(o.ownerId)}\n${formatYen(o.total)}`;
+                segment.dataset['month'] = String(month);
+                bar.appendChild(segment);
+                yearByOwner.set(o.ownerId, (yearByOwner.get(o.ownerId) ?? 0) + o.total);
+            }
             track.appendChild(bar);
             item.append(
                 el('span', 'dt-chart__value', total > 0 ? formatYen(total) : ''),
@@ -287,7 +313,23 @@ export async function render(
             );
             chart.appendChild(item);
         }
-        section.appendChild(chart);
+        const tooltip = el('div', 'dt-tooltip');
+        tooltip.setAttribute('role', 'tooltip');
+        tooltip.hidden = true;
+        wrap.append(chart, tooltip);
+
+        const legend = el('ul', 'dt-legend');
+        const owners = Array.from(yearByOwner, ([ownerId, total]) => ({ ownerId, total }));
+        for (const { ownerId, total } of owners.sort(byColor)) {
+            const li = el('li');
+            li.append(
+                el('span', `dt-legend__swatch ${colorClass(ownerId)}`),
+                document.createTextNode(`${memberName(ownerId)} ${formatYen(total)}`),
+            );
+            legend.appendChild(li);
+        }
+        wrap.appendChild(legend);
+        section.appendChild(wrap);
         return section;
     };
 
@@ -361,10 +403,10 @@ export async function render(
         const sharesField = labeled('保有株数', shares);
         sharesField.className = 'dt-field--shares';
         form.append(
-            ownerField,
             labeled('銘柄コード', input('text', 'ticker', record?.ticker ?? '')),
             labeled('銘柄名', input('text', 'name', record?.name ?? '')),
             sharesField,
+            ownerField,
             payments,
             el('p', 'dt-error'),
             actions,
@@ -566,6 +608,62 @@ export async function render(
             } else if (action === undefined) {
                 const row = e.target.closest('tr.dt-row--editable');
                 if (row) openEditor(row);
+            }
+        },
+        { signal },
+    );
+
+    const hideTooltip = (): void => {
+        for (const tip of container.querySelectorAll<HTMLElement>('.dt-tooltip')) {
+            tip.hidden = true;
+        }
+    };
+
+    const showTooltip = (segment: HTMLElement): void => {
+        const wrap = segment.closest('.dt-chart-wrap');
+        const tip = wrap?.querySelector<HTMLElement>('.dt-tooltip');
+        if (!(wrap instanceof HTMLElement) || !tip) return;
+        const [name = '', amount = ''] = (segment.dataset['tooltip'] ?? '').split('\n');
+        tip.replaceChildren(
+            el('span', 'dt-tooltip__name', name),
+            el('span', 'dt-tooltip__amount', amount),
+        );
+        tip.hidden = false;
+        const area = wrap.getBoundingClientRect();
+        const rect = segment.getBoundingClientRect();
+        const half = tip.offsetWidth / 2;
+        const center = rect.left + rect.width / 2 - area.left;
+        tip.style.left = `${Math.min(Math.max(center, half), Math.max(half, area.width - half))}px`;
+        tip.style.top = `${rect.top - area.top}px`;
+    };
+
+    container.addEventListener(
+        'pointerover',
+        (e) => {
+            if (!(e.target instanceof Element)) return;
+            const segment = e.target.closest('.dt-chart__segment');
+            if (segment instanceof HTMLElement) showTooltip(segment);
+        },
+        { signal },
+    );
+
+    container.addEventListener(
+        'pointerout',
+        (e) => {
+            // タッチは指を離すと pointerout が来るので、次に別の場所を触るまで出しておく
+            if (e.pointerType === 'touch') return;
+            if (e.target instanceof Element && e.target.closest('.dt-chart__segment')) {
+                hideTooltip();
+            }
+        },
+        { signal },
+    );
+
+    container.addEventListener(
+        'pointerdown',
+        (e) => {
+            if (e.target instanceof Element && !e.target.closest('.dt-chart__segment')) {
+                hideTooltip();
             }
         },
         { signal },

@@ -230,20 +230,29 @@ export function yearlyTotals(records: DividendRecord[]): { year: string; total: 
     );
 }
 
-/** 指定した年（'YYYY'）の 1〜12 月それぞれの受取額の合計。 */
-export function monthlyTotals(
-    records: DividendRecord[],
-    year: string,
-): { month: number; total: number }[] {
-    const totals = Array.from({ length: 12 }, (_, i) => ({ month: i + 1, total: 0 }));
+export interface MonthlyTotal {
+    month: number; // 1〜12
+    total: number; // 円
+    owners: { ownerId: number; total: number }[]; // ownerId の昇順。0 円の保有者は含めない
+}
+
+/** 指定した年（'YYYY'）の 1〜12 月それぞれの受取額の合計と、保有者ごとの内訳。 */
+export function monthlyTotals(records: DividendRecord[], year: string): MonthlyTotal[] {
+    const byOwner = Array.from({ length: 12 }, () => new Map<number, number>());
     for (const record of records) {
         for (const payment of record.payments) {
             if (payment.payDate.substring(0, 4) !== year) continue;
-            const entry = totals[Number(payment.payDate.substring(5, 7)) - 1];
-            if (entry) entry.total += payment.amount;
+            const owners = byOwner[Number(payment.payDate.substring(5, 7)) - 1];
+            if (!owners) continue;
+            owners.set(record.ownerId, (owners.get(record.ownerId) ?? 0) + payment.amount);
         }
     }
-    return totals;
+    return byOwner.map((owners, i) => {
+        const list = Array.from(owners, ([ownerId, total]) => ({ ownerId, total }))
+            .filter((o) => o.total > 0)
+            .sort((a, b) => a.ownerId - b.ownerId);
+        return { month: i + 1, total: list.reduce((sum, o) => sum + o.total, 0), owners: list };
+    });
 }
 
 /** 一覧表示用。ticker → ownerId → id の昇順。 */

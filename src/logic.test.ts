@@ -302,3 +302,33 @@ test('monthlyTotals sums payments per month of the given year', () => {
     );
     assert.equal(JSON.stringify(list), snapshot);
 });
+
+test('monthlyTotals splits each month by owner', () => {
+    const list = [
+        rec({ id: 'a', ownerId: 2, payments: [pay('2025-06-02', 1000, 1000)] }),
+        rec({ id: 'b', ownerId: 1, payments: [pay('2025-06-30', 1000, 1000)] }),
+        // 同じ保有者の別記録は合算する
+        rec({ id: 'c', ownerId: 2, shares: 50, payments: [pay('2025-06-15', 1000, 500)] }),
+        // 0 円の保有者は内訳に入れない
+        rec({ id: 'd', ownerId: 3, payments: [pay('2025-06-20', 0, 0), pay('2025-07-01')] }),
+        // 他の年は含まない
+        rec({ id: 'e', ownerId: 4, payments: [pay('2024-06-01')] }),
+    ];
+    const months = monthlyTotals(list, '2025');
+    assert.deepEqual(months[5], {
+        month: 6,
+        total: 2500,
+        owners: [
+            { ownerId: 1, total: 1000 },
+            { ownerId: 2, total: 1500 },
+        ],
+    });
+    assert.deepEqual(months[6], { month: 7, total: 1000, owners: [{ ownerId: 3, total: 1000 }] });
+    assert.deepEqual(months[0], { month: 1, total: 0, owners: [] });
+    for (const m of months) {
+        assert.equal(
+            m.owners.reduce((sum, o) => sum + o.total, 0),
+            m.total,
+        );
+    }
+});
