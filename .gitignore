@@ -20,3 +20,4 @@ build/
 
 # Personal Claude Code settings (not shared)
 CLAUDE.local.md
+scripts/ollama_implement.py
