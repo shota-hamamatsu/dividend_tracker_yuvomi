@@ -52,7 +52,10 @@ npm run format:check # Prettier（整形は npm run format）
 npm run typecheck   # 型チェック
 npm test            # ロジックとサイドカーのテスト
 npm run build       # modules/dividend-tracker/index.js を生成
+npm run build:pages # 画面確認ページを dist/ に静的ビルド（GitHub Pages 用。仕様: docs/specs/github-pages-preview.md）
 ```
+
+画面確認ページは main への push で GitHub Pages に公開されます: https://shota-hamamatsu.github.io/dividend_tracker_yuvomi/dev/
 
 ## yuvomi への導入
 
