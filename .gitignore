@@ -17,3 +17,6 @@ Desktop.ini
 node_modules/
 dist/
 build/
+
+# Personal Claude Code settings (not shared)
+CLAUDE.local.md
