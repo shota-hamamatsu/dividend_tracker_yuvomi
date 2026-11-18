@@ -1,0 +1,9 @@
+# パスを変えずにサイドカーへ転送する（handle_path ではなく handle を使う）。
+yuvomi.example.com {
+	handle /api/extensions/dividend-tracker/* {
+		reverse_proxy dividend-tracker:8080
+	}
+	handle {
+		reverse_proxy yuvomi:3000
+	}
+}

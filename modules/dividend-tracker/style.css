@@ -10,6 +10,17 @@
   gap: 0.25rem;
 }
 
+.dt-totals {
+  font-size: 1.125rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.page-section > label {
+  display: inline-grid;
+  gap: 0.25rem;
+  margin-bottom: 0.5rem;
+}
+
 .dt-error {
   color: #dc2626;
   min-height: 1.25rem;

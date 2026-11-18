@@ -1,16 +1,17 @@
 {
     "name": "dividend-tracker-yuvomi",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "private": true,
     "type": "module",
-    "description": "yuvomi.cloud 向け配当管理モジュール（TypeScript ソース → modules/dividend-tracker/index.js にビルド）",
+    "description": "yuvomi.cloud 向け配当管理モジュール（TypeScript ソース → modules/dividend-tracker/index.js にビルド）とサイドカー（server/）",
     "scripts": {
         "build": "vite build",
         "lint": "eslint .",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
         "typecheck": "tsc --noEmit",
-        "test": "node --test --experimental-strip-types src/**/*.test.ts"
+        "test": "node --test --experimental-strip-types src/**/*.test.ts server/**/*.test.ts",
+        "start:server": "node --experimental-strip-types server/main.ts"
     },
     "devDependencies": {
         "@eslint/js": "^9.39.5",

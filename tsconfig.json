@@ -10,7 +10,8 @@
         "allowImportingTsExtensions": true,
         "noEmit": true,
         "skipLibCheck": true,
-        "types": ["node"]
+        "types": ["node"],
+        "paths": { "/api.js": ["./src/types/api.d.ts"] }
     },
-    "include": ["src", "vite.config.ts"]
+    "include": ["src", "server", "vite.config.ts"]
 }

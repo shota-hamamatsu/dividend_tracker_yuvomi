@@ -1,15 +1,24 @@
+import { api } from '/api.js';
 import {
     type DividendRecord,
-    parseRecords,
+    filterByOwner,
+    formatPerShare,
+    formatYen,
+    isValidRecord,
+    sortByPayDateDesc,
     validateInput,
     yearlyTotals,
-    sortByPayDateDesc,
-    formatYen,
-    newId,
 } from './logic.ts';
 
-const STORAGE_KEY = 'dividend-tracker:v1';
+const ENDPOINT = '/api/extensions/dividend-tracker/records';
 const EMPTY_TEXT = 'まだ記録がありません';
+const UNKNOWN_USER = '（不明なユーザー）';
+
+interface Me {
+    id: number;
+    isAdmin: boolean;
+    canWrite: boolean;
+}
 
 function el<K extends keyof HTMLElementTagNameMap>(
     tag: K,
@@ -22,26 +31,9 @@ function el<K extends keyof HTMLElementTagNameMap>(
     return node;
 }
 
-function load(): DividendRecord[] {
-    try {
-        return parseRecords(localStorage.getItem(STORAGE_KEY));
-    } catch {
-        return [];
-    }
-}
-
-function save(records: DividendRecord[]): boolean {
-    try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
-        return true;
-    } catch {
-        return false;
-    }
-}
-
-function labeled(text: string, input: HTMLInputElement): HTMLLabelElement {
+function labeled(text: string, control: HTMLElement): HTMLLabelElement {
     const label = el('label', undefined, text);
-    label.appendChild(input);
+    label.appendChild(control);
     return label;
 }
 
@@ -52,23 +44,91 @@ function input(type: string, name: string): HTMLInputElement {
     return node;
 }
 
+function option(value: string, text: string, selected = false): HTMLOptionElement {
+    const node = el('option', undefined, text);
+    node.value = value;
+    node.selected = selected;
+    return node;
+}
+
+function parseMembers(body: unknown): Map<number, string> {
+    const map = new Map<number, string>();
+    const data = (body as { data?: unknown } | null)?.data;
+    if (!Array.isArray(data)) return map;
+    for (const m of data) {
+        const { id, display_name } = (m ?? {}) as { id?: unknown; display_name?: unknown };
+        if (typeof id === 'number' && Number.isInteger(id) && id > 0) {
+            map.set(id, typeof display_name === 'string' ? display_name : String(id));
+        }
+    }
+    return map;
+}
+
+async function errorMessage(res: Response, fallback: string): Promise<string> {
+    try {
+        const body = (await res.json()) as { error?: unknown };
+        return typeof body.error === 'string' ? body.error : fallback;
+    } catch {
+        return fallback;
+    }
+}
+
 export async function render(
     container: HTMLElement,
     context: { signal: AbortSignal },
 ): Promise<void> {
     const { signal } = context;
-    let records = load();
+    let records: DividendRecord[] = [];
+    let members = new Map<number, string>();
+    let me: Me = { id: 0, isAdmin: false, canWrite: false };
+    let csrfToken = '';
+    let filter: number | null = null;
     let errorEl = el('p', 'dt-error');
+    let submitEl: HTMLButtonElement | null = null;
 
-    const buildTotals = (): HTMLElement => {
+    const memberName = (id: number): string => members.get(id) ?? UNKNOWN_USER;
+    const canDelete = (r: DividendRecord): boolean =>
+        me.canWrite && (me.isAdmin || r.ownerId === me.id);
+
+    const request = (method: 'POST' | 'DELETE', url: string, body?: unknown): Promise<Response> =>
+        fetch(url, {
+            method,
+            credentials: 'same-origin',
+            cache: 'no-store',
+            signal,
+            headers: {
+                'X-DT-CSRF': csrfToken,
+                ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+            },
+            body: body === undefined ? undefined : JSON.stringify(body),
+        });
+
+    const shell = (...sections: HTMLElement[]): void => {
+        const toolbar = el('div', 'page-toolbar');
+        toolbar.appendChild(el('h1', 'page-toolbar__title', '配当管理'));
+        const body = el('div', 'app-page__body');
+        body.append(...sections);
+        container.replaceChildren(toolbar, body);
+    };
+
+    const buildTotals = (visible: DividendRecord[]): HTMLElement => {
         const section = el('section', 'page-section');
-        section.appendChild(el('h2', undefined, '年別合計'));
-        const totals = yearlyTotals(records);
+        section.appendChild(el('h2', undefined, '年間配当合計'));
+
+        const select = el('select');
+        select.name = 'filter';
+        select.appendChild(option('', 'すべて', filter === null));
+        for (const [id, name] of members) {
+            select.appendChild(option(String(id), name, filter === id));
+        }
+        section.appendChild(labeled('保有者', select));
+
+        const totals = yearlyTotals(visible);
         if (totals.length === 0) {
             section.appendChild(el('p', undefined, EMPTY_TEXT));
             return section;
         }
-        const ul = el('ul');
+        const ul = el('ul', 'dt-totals');
         for (const { year, total } of totals) {
             ul.appendChild(el('li', undefined, `${year}年: ${formatYen(total)}`));
         }
@@ -76,40 +136,21 @@ export async function render(
         return section;
     };
 
-    const buildForm = (): HTMLElement => {
-        const section = el('section', 'page-section');
-        section.appendChild(el('h2', undefined, '配当を追加'));
-        const form = el('form', 'dt-form');
-        const amount = input('number', 'amount');
-        amount.min = '0';
-        amount.step = '1';
-        form.append(
-            labeled('銘柄コード', input('text', 'ticker')),
-            labeled('銘柄名', input('text', 'name')),
-            labeled('受取日', input('date', 'payDate')),
-            labeled('受取額（円）', amount),
-        );
-        const submit = el('button', undefined, '追加');
-        submit.type = 'submit';
-        form.appendChild(submit);
-        errorEl = el('p', 'dt-error');
-        section.append(form, errorEl);
-        return section;
-    };
-
-    const buildList = (): HTMLElement => {
+    const buildList = (visible: DividendRecord[]): HTMLElement => {
         const section = el('section', 'page-section');
         section.appendChild(el('h2', undefined, '受取履歴'));
-        if (records.length === 0) {
+        if (visible.length === 0) {
             section.appendChild(el('p', undefined, EMPTY_TEXT));
             return section;
         }
-        const table = el('table', 'dt-table');
         const headRow = el('tr');
         for (const [text, numeric] of [
             ['受取日', false],
+            ['保有者', false],
             ['銘柄', false],
             ['銘柄名', false],
+            ['保有株数', true],
+            ['1株配当', true],
             ['受取額', true],
             ['操作', false],
         ] as const) {
@@ -119,84 +160,203 @@ export async function render(
         thead.appendChild(headRow);
 
         const tbody = el('tbody');
-        for (const rec of sortByPayDateDesc(records)) {
+        for (const rec of sortByPayDateDesc(visible)) {
             const row = el('tr');
             row.append(
                 el('td', undefined, rec.payDate),
+                el('td', undefined, memberName(rec.ownerId)),
                 el('td', undefined, rec.ticker),
                 el('td', undefined, rec.name),
+                el('td', 'dt-num', formatYen(rec.shares).replace(/円$/, '株')),
+                el('td', 'dt-num', formatPerShare(rec.perShareCents)),
                 el('td', 'dt-num', formatYen(rec.amount)),
             );
-            const del = el('button', undefined, '削除');
-            del.type = 'button';
-            del.dataset['action'] = 'delete';
-            del.dataset['id'] = rec.id;
             const cell = el('td');
-            cell.appendChild(del);
+            if (canDelete(rec)) {
+                const del = el('button', undefined, '削除');
+                del.type = 'button';
+                del.dataset['action'] = 'delete';
+                del.dataset['id'] = rec.id;
+                cell.appendChild(del);
+            }
             row.appendChild(cell);
             tbody.appendChild(row);
         }
+        const table = el('table', 'dt-table');
         table.append(thead, tbody);
         section.appendChild(table);
         return section;
     };
 
+    const buildForm = (): HTMLElement => {
+        const section = el('section', 'page-section');
+        section.appendChild(el('h2', undefined, '配当を追加'));
+        errorEl = el('p', 'dt-error');
+        submitEl = null;
+        if (!me.canWrite) {
+            section.appendChild(el('p', undefined, '閲覧のみの権限です'));
+            return section;
+        }
+
+        const owner = el('select');
+        owner.name = 'ownerId';
+        const choices = me.isAdmin ? [...members.keys()] : [me.id];
+        if (!choices.includes(me.id)) choices.unshift(me.id);
+        for (const id of choices) {
+            owner.appendChild(option(String(id), memberName(id), id === me.id));
+        }
+
+        const shares = input('number', 'shares');
+        shares.min = '1';
+        shares.step = '1';
+        const perShare = input('text', 'perShare');
+        perShare.inputMode = 'decimal';
+
+        const form = el('form', 'dt-form');
+        form.append(
+            labeled('保有者', owner),
+            labeled('銘柄コード', input('text', 'ticker')),
+            labeled('銘柄名', input('text', 'name')),
+            labeled('受取日', input('date', 'payDate')),
+            labeled('保有株数', shares),
+            labeled('1株当たり配当（円）', perShare),
+        );
+        submitEl = el('button', undefined, '追加');
+        submitEl.type = 'submit';
+        form.appendChild(submitEl);
+        section.append(form, errorEl);
+        return section;
+    };
+
     const draw = (message = ''): void => {
-        const toolbar = el('div', 'page-toolbar');
-        toolbar.appendChild(el('h1', 'page-toolbar__title', '配当管理'));
-        const body = el('div', 'app-page__body');
-        body.append(buildTotals(), buildForm(), buildList());
-        container.replaceChildren(toolbar, body);
+        const visible = filterByOwner(records, filter);
+        shell(buildTotals(visible), buildList(visible), buildForm());
         errorEl.textContent = message;
     };
 
-    const commit = (next: DividendRecord[]): void => {
-        records = next;
-        draw(save(records) ? '' : '保存できませんでした');
+    const showFailure = (message = 'データを読み込めませんでした'): void => {
+        const section = el('section', 'page-section');
+        const retry = el('button', undefined, '再読み込み');
+        retry.type = 'button';
+        retry.dataset['action'] = 'reload';
+        section.append(el('p', 'dt-error', message), retry);
+        shell(section);
+    };
+
+    const load = async (): Promise<void> => {
+        shell(el('p', undefined, '読み込み中…'));
+        try {
+            const [memberBody, res] = await Promise.all([
+                api.get('/family/members', { signal }),
+                fetch(ENDPOINT, { credentials: 'same-origin', cache: 'no-store', signal }),
+            ]);
+            if (signal.aborted) return;
+            if (!res.ok) {
+                const message = await errorMessage(res, 'データを読み込めませんでした');
+                if (!signal.aborted) showFailure(message);
+                return;
+            }
+            const body = (await res.json()) as {
+                data?: unknown;
+                me?: Partial<Me>;
+                csrfToken?: unknown;
+            };
+            if (signal.aborted) return;
+            members = parseMembers(memberBody);
+            records = Array.isArray(body.data) ? body.data.filter(isValidRecord) : [];
+            me = {
+                id: typeof body.me?.id === 'number' ? body.me.id : 0,
+                isAdmin: body.me?.isAdmin === true,
+                canWrite: body.me?.canWrite === true,
+            };
+            csrfToken = typeof body.csrfToken === 'string' ? body.csrfToken : '';
+            if (filter !== null && !members.has(filter)) filter = null;
+            draw();
+        } catch {
+            if (!signal.aborted) showFailure();
+        }
     };
 
     container.addEventListener(
-        'submit',
+        'change',
         (e) => {
+            const target = e.target;
+            if (!(target instanceof HTMLSelectElement) || target.name !== 'filter') return;
+            filter = target.value === '' ? null : Number(target.value);
+            draw();
+        },
+        { signal },
+    );
+
+    container.addEventListener(
+        'submit',
+        async (e) => {
             e.preventDefault();
             const form = e.target;
             if (!(form instanceof HTMLFormElement)) return;
             const data = new FormData(form);
             const text = (key: string): string => String(data.get(key) ?? '');
-            const ticker = text('ticker').trim();
-            const payDate = text('payDate');
-            const amountText = text('amount');
-
-            const error = validateInput({ ticker, payDate, amountText });
+            const payload = {
+                ownerId: Number(text('ownerId')),
+                ticker: text('ticker'),
+                name: text('name'),
+                payDate: text('payDate'),
+                sharesText: text('shares'),
+                perShareText: text('perShare'),
+            };
+            const error = validateInput(payload);
             if (error !== null) {
                 errorEl.textContent = error;
                 return;
             }
-            commit([
-                ...records,
-                {
-                    id: newId(),
-                    ticker,
-                    name: text('name').trim(),
-                    payDate,
-                    amount: Number(amountText),
-                },
-            ]);
+            const button = submitEl;
+            if (button) button.disabled = true;
+            try {
+                const res = await request('POST', ENDPOINT, payload);
+                if (signal.aborted) return;
+                if (!res.ok) {
+                    errorEl.textContent = await errorMessage(res, '保存できませんでした');
+                    return;
+                }
+                const body = (await res.json()) as { data?: unknown };
+                if (signal.aborted) return;
+                if (isValidRecord(body.data)) records = [...records, body.data];
+                draw();
+            } catch {
+                if (!signal.aborted) errorEl.textContent = '保存できませんでした';
+            } finally {
+                if (button) button.disabled = false;
+            }
         },
         { signal },
     );
 
     container.addEventListener(
         'click',
-        (e) => {
+        async (e) => {
             if (!(e.target instanceof Element)) return;
+            if (e.target.closest('[data-action="reload"]')) {
+                await load();
+                return;
+            }
             const button = e.target.closest<HTMLElement>('[data-action="delete"]');
-            if (!button) return;
-            const id = button.dataset['id'];
-            commit(records.filter((r) => r.id !== id));
+            const id = button?.dataset['id'];
+            if (!id || !confirm('この記録を削除しますか？')) return;
+            try {
+                const res = await request('DELETE', `${ENDPOINT}/${encodeURIComponent(id)}`);
+                if (signal.aborted) return;
+                if (!res.ok) {
+                    errorEl.textContent = await errorMessage(res, '削除できませんでした');
+                    return;
+                }
+                records = records.filter((r) => r.id !== id);
+                draw();
+            } catch {
+                if (!signal.aborted) errorEl.textContent = '削除できませんでした';
+            }
         },
         { signal },
     );
 
-    draw();
+    await load();
 }

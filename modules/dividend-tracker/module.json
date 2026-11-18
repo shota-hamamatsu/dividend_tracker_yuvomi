@@ -2,12 +2,18 @@
   "manifestVersion": 1,
   "id": "dividend-tracker",
   "name": "配当管理",
-  "version": "0.1.0",
-  "description": "受取った配当（分配金）を記録し、年ごとの合計を確認できる。",
+  "version": "0.2.0",
+  "description": "家族の配当（分配金）を保有者・株数・1株配当とともに記録し、年ごとの合計を確認できる。サイドカーサービスが必要。",
   "entry": "index.js",
   "style": "style.css",
   "icon": "wallet",
   "accent": "#16A34A",
   "menu": { "show": true, "label": "配当", "icon": "wallet", "order": 100 },
-  "page": { "composition": "data", "width": "content", "navigation": "standard", "responsive": "standard" }
+  "page": { "composition": "data", "width": "content", "navigation": "standard", "responsive": "standard" },
+  "capabilities": {
+    "permissions": {
+      "module": { "label": "配当管理", "icon": "wallet" }
+    },
+    "api": { "prefix": "/api/extensions/dividend-tracker" }
+  }
 }

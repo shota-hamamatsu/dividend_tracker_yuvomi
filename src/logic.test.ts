@@ -1,94 +1,157 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+    type DividendRecord,
+    calcAmount,
+    filterByOwner,
+    formatPerShare,
+    formatYen,
+    isValidDate,
     isValidRecord,
+    parsePerShare,
     parseRecords,
+    parseShares,
+    sortByPayDateDesc,
     validateInput,
     yearlyTotals,
-    sortByPayDateDesc,
-    formatYen,
-    newId,
-    type DividendRecord,
 } from './logic.ts';
 
-const rec = (id: string, payDate: string, amount: number): DividendRecord => ({
-    id,
-    ticker: '8306',
-    name: '',
-    payDate,
-    amount,
-});
+function rec(over: Partial<DividendRecord>): DividendRecord {
+    return {
+        id: 'x',
+        ownerId: 1,
+        ticker: '7203',
+        name: '',
+        payDate: '2025-01-01',
+        shares: 100,
+        perShareCents: 1000,
+        amount: 1000,
+        createdBy: 1,
+        createdAt: '2025-01-01T00:00:00.000Z',
+        ...over,
+    };
+}
 
-test('formatYen: 3桁区切り', () => {
+test('formatYen groups by three digits', () => {
     assert.equal(formatYen(0), '0円');
     assert.equal(formatYen(999), '999円');
     assert.equal(formatYen(1000), '1,000円');
     assert.equal(formatYen(1234567), '1,234,567円');
 });
 
-test('yearlyTotals: 年ごとに合計し新しい年が先', () => {
-    const totals = yearlyTotals([
-        rec('a', '2024-03-01', 100),
-        rec('b', '2025-06-15', 250),
-        rec('c', '2024-12-31', 50),
-        rec('d', '2025-01-01', 1),
-    ]);
-    assert.deepEqual(totals, [
-        { year: '2025', total: 251 },
-        { year: '2024', total: 150 },
-    ]);
-    assert.deepEqual(yearlyTotals([]), []);
-});
-
-test('sortByPayDateDesc: 新しい順・同日は元の順・元配列は不変', () => {
-    const input = [rec('a', '2024-01-01', 1), rec('b', '2025-01-01', 2), rec('c', '2025-01-01', 3)];
-    const snapshot = input.map((r) => r.id);
-    const sorted = sortByPayDateDesc(input);
-    assert.deepEqual(
-        sorted.map((r) => r.id),
-        ['b', 'c', 'a'],
-    );
-    assert.deepEqual(
-        input.map((r) => r.id),
-        snapshot,
-    );
-});
-
-test('validateInput', () => {
-    const ok = { ticker: '8306', payDate: '2025-06-15', amountText: '1200' };
-    assert.equal(validateInput(ok), null);
-    assert.equal(validateInput({ ...ok, amountText: '0' }), null);
-    assert.equal(validateInput({ ...ok, ticker: '  ' }), '銘柄コードを入力してください');
-    assert.equal(validateInput({ ...ok, payDate: '' }), '受取日を入力してください');
-    for (const bad of ['', '-1', '1.5', 'abc', '1e3', ' ']) {
-        assert.equal(
-            validateInput({ ...ok, amountText: bad }),
-            '受取額は0以上の整数で入力してください',
-            bad,
-        );
+test('parseShares', () => {
+    assert.equal(parseShares('1'), 1);
+    assert.equal(parseShares('100'), 100);
+    assert.equal(parseShares('10000000'), 10_000_000);
+    for (const bad of ['', '0', '01', '-1', '1.5', '1e3', ' 1', 'abc', '10000001']) {
+        assert.equal(parseShares(bad), null, bad);
     }
 });
 
-test('isValidRecord / parseRecords', () => {
-    assert.equal(isValidRecord(rec('a', '2025-01-01', 10)), true);
-    assert.equal(isValidRecord({ ...rec('a', '2025-01-01', 10), amount: -1 }), false);
-    assert.equal(isValidRecord({ ...rec('a', '2025-01-01', 10), amount: 1.5 }), false);
-    assert.equal(isValidRecord({ ...rec('a', '2025-01-01', 10), amount: Infinity }), false);
-    assert.equal(isValidRecord({ ...rec('a', '2025-01-01', 10), ticker: '' }), false);
-    assert.equal(isValidRecord({ ...rec('a', '2025-1-1', 10) }), false);
-    assert.equal(isValidRecord(null), false);
-
-    assert.deepEqual(parseRecords(null), []);
-    assert.deepEqual(parseRecords('not json'), []);
-    assert.deepEqual(parseRecords('{"a":1}'), []);
-    const good = rec('a', '2025-01-01', 10);
-    assert.deepEqual(parseRecords(JSON.stringify([good, { bad: true }, 5])), [good]);
+test('parsePerShare converts to hundredths without floats', () => {
+    assert.equal(parsePerShare('37.5'), 3750);
+    assert.equal(parsePerShare('0.05'), 5);
+    assert.equal(parsePerShare('12'), 1200);
+    assert.equal(parsePerShare('0'), 0);
+    assert.equal(parsePerShare('0.29'), 29); // 0.29*100 は浮動小数点だと 28.999...
+    assert.equal(parsePerShare('100000'), 10_000_000);
+    for (const bad of ['', '1.234', '-1', '1e3', ' 1', '.5', '1.', 'abc', '100000.01']) {
+        assert.equal(parsePerShare(bad), null, bad);
+    }
 });
 
-test('newId: 重複しない文字列', () => {
-    const a = newId();
-    const b = newId();
-    assert.equal(typeof a, 'string');
-    assert.ok(a.length > 0);
-    assert.notEqual(a, b);
+test('calcAmount floors below one yen', () => {
+    assert.equal(calcAmount(3, 3750), 112);
+    assert.equal(calcAmount(100, 3750), 3750);
+    assert.equal(calcAmount(1, 5), 0);
+    assert.equal(calcAmount(10_000_000, 10_000_000), 1_000_000_000_000);
+});
+
+test('isValidDate', () => {
+    assert.equal(isValidDate('2024-02-29'), true);
+    assert.equal(isValidDate('2025-12-31'), true);
+    for (const bad of ['2025-02-29', '2025-02-30', '2025-13-01', '2025-00-10', '2025-1-1', '']) {
+        assert.equal(isValidDate(bad), false, bad);
+    }
+});
+
+test('validateInput', () => {
+    const ok = {
+        ownerId: 1,
+        ticker: '7203',
+        name: '',
+        payDate: '2025-03-31',
+        sharesText: '100',
+        perShareText: '37.5',
+    };
+    assert.equal(validateInput(ok), null);
+    assert.equal(validateInput({ ...ok, ownerId: 0 }), '保有者を選んでください');
+    assert.equal(validateInput({ ...ok, ownerId: 1.5 }), '保有者を選んでください');
+    assert.equal(validateInput({ ...ok, ticker: '  ' }), '銘柄コードを入力してください');
+    assert.equal(validateInput({ ...ok, payDate: '2025-02-30' }), '受取日を入力してください');
+    assert.equal(
+        validateInput({ ...ok, sharesText: '0' }),
+        '保有株数は1以上の整数で入力してください',
+    );
+    assert.equal(
+        validateInput({ ...ok, perShareText: '1.234' }),
+        '1株当たり配当は0以上、小数第2位までで入力してください',
+    );
+});
+
+test('isValidRecord / parseRecords', () => {
+    assert.equal(isValidRecord(rec({})), true);
+    assert.equal(isValidRecord(rec({ amount: 999 })), false);
+    assert.equal(isValidRecord(rec({ ownerId: 0 })), false);
+    assert.equal(isValidRecord(rec({ ticker: '' })), false);
+    assert.equal(isValidRecord(rec({ shares: 0, amount: 0 })), false);
+    assert.equal(isValidRecord(rec({ payDate: '2025-02-30' })), false);
+    assert.equal(isValidRecord(null), false);
+    assert.equal(isValidRecord('x'), false);
+
+    assert.deepEqual(parseRecords(null), []);
+    assert.deepEqual(parseRecords('{'), []);
+    assert.deepEqual(parseRecords('{}'), []);
+    const good = rec({ id: 'a' });
+    assert.deepEqual(parseRecords(JSON.stringify([good, { id: 'b' }])), [good]);
+});
+
+test('filterByOwner', () => {
+    const list = [rec({ id: 'a', ownerId: 1 }), rec({ id: 'b', ownerId: 2 })];
+    const all = filterByOwner(list, null);
+    assert.deepEqual(all, list);
+    assert.notEqual(all, list);
+    assert.deepEqual(
+        filterByOwner(list, 2).map((r) => r.id),
+        ['b'],
+    );
+});
+
+test('yearlyTotals and sortByPayDateDesc', () => {
+    const list = [
+        rec({ id: 'a', payDate: '2024-06-01', amount: 1000 }),
+        rec({ id: 'b', payDate: '2025-03-01', amount: 2000, shares: 200 }),
+        rec({ id: 'c', payDate: '2025-03-01', amount: 500, shares: 50 }),
+    ];
+    assert.deepEqual(yearlyTotals(list), [
+        { year: '2025', total: 2500 },
+        { year: '2024', total: 1000 },
+    ]);
+    assert.deepEqual(yearlyTotals([]), []);
+    assert.deepEqual(
+        sortByPayDateDesc(list).map((r) => r.id),
+        ['b', 'c', 'a'],
+    );
+    assert.deepEqual(
+        list.map((r) => r.id),
+        ['a', 'b', 'c'],
+    );
+});
+
+test('formatPerShare', () => {
+    assert.equal(formatPerShare(3750), '37.5円');
+    assert.equal(formatPerShare(5), '0.05円');
+    assert.equal(formatPerShare(120000), '1,200円');
+    assert.equal(formatPerShare(0), '0円');
+    assert.equal(formatPerShare(123456), '1,234.56円');
 });

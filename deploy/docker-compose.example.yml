@@ -1,0 +1,38 @@
+# yuvomi + 配当管理サイドカー + Caddy（リバースプロキシ）の構成例。
+# yuvomi 公式の docker-compose.yml に dividend-tracker と caddy を足したもの。
+# ブラウザは Caddy にだけ接続し、/api/extensions/dividend-tracker/* がサイドカーへ、
+# それ以外が yuvomi へ転送される（同一オリジンにするため）。
+services:
+    yuvomi:
+        image: ghcr.io/ulsklyc/yuvomi:latest
+        restart: unless-stopped
+        env_file:
+            - .env
+        environment:
+            - NODE_ENV=production
+            - MODULES_DIR=/app/modules
+        volumes:
+            - ./data:/data
+            - ./modules:/app/modules # modules/dividend-tracker/ をここへ置く
+        # ports は公開しない（Caddy 経由でのみ到達させる）
+
+    dividend-tracker:
+        build:
+            context: ./dividend_tracker_yuvomi # このリポジトリを clone した場所
+            dockerfile: server/Dockerfile
+        restart: unless-stopped
+        environment:
+            - PUBLIC_ORIGIN=https://yuvomi.example.com # ブラウザで開く URL（末尾の / なし）
+            - YUVOMI_INTERNAL_URL=http://yuvomi:3000
+        volumes:
+            - ./dividend-data:/data # 配当データ（records.json）。バックアップ対象
+
+    caddy:
+        image: caddy:2
+        restart: unless-stopped
+        ports:
+            - '80:80'
+            - '443:443'
+        volumes:
+            - ./Caddyfile:/etc/caddy/Caddyfile:ro
+            - ./caddy-data:/data
