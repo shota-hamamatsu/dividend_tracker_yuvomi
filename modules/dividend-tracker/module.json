@@ -1,0 +1,13 @@
+{
+  "manifestVersion": 1,
+  "id": "dividend-tracker",
+  "name": "配当管理",
+  "version": "0.1.0",
+  "description": "受取った配当（分配金）を記録し、年ごとの合計を確認できる。",
+  "entry": "index.js",
+  "style": "style.css",
+  "icon": "wallet",
+  "accent": "#16A34A",
+  "menu": { "show": true, "label": "配当", "icon": "wallet", "order": 100 },
+  "page": { "composition": "data", "width": "content", "navigation": "standard", "responsive": "standard" }
+}
