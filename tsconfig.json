@@ -13,5 +13,5 @@
         "types": ["node"],
         "paths": { "/api.js": ["./src/types/api.d.ts"] }
     },
-    "include": ["src", "server", "vite.config.ts"]
+    "include": ["src", "server", "dev", "vite.config.ts", "vite.dev.config.ts"]
 }

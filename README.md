@@ -44,6 +44,7 @@ Node.js 22.12 以上が必要です。
 
 ```bash
 npm install
+npm run dev         # 画面確認用ページ（http://localhost:5173/dev/。yuvomi・サイドカー不要。仕様: docs/specs/dev-preview.md）
 npm run lint        # ESLint
 npm run format:check # Prettier（整形は npm run format）
 npm run typecheck   # 型チェック

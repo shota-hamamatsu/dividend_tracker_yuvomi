@@ -5,6 +5,7 @@
     "type": "module",
     "description": "yuvomi.cloud 向け配当管理モジュール（TypeScript ソース → modules/dividend-tracker/index.js にビルド）とサイドカー（server/）",
     "scripts": {
+        "dev": "vite --config vite.dev.config.ts",
         "build": "vite build",
         "lint": "eslint .",
         "format": "prettier --write .",
