@@ -133,7 +133,7 @@
 }
 
 .dt-heading button {
-  margin-left: auto;
+  margin-inline-start: auto;
   min-height: var(--target-base, 44px);
   padding: var(--space-2, 0.5rem) var(--space-4, 1rem);
   border: 0;
@@ -144,7 +144,10 @@
   cursor: pointer;
 }
 
-/* 横スクロールは出さない。銘柄・受取日は折り返し、見出しと数値は折り返さない */
+/*
+ * 横スクロールは出さない。金額と保有者は折り返さない。
+ * 見出し・銘柄・受取日・保有株数（数字と単位の間）は折り返す（言語によって長さが変わるため）
+ */
 .dt-list {
   width: 100%;
   border-collapse: collapse;
@@ -155,13 +158,22 @@
 .dt-list td {
   padding: var(--space-2, 0.5rem) var(--space-3, 0.75rem);
   border-bottom: 1px solid color-mix(in srgb, var(--color-text-secondary, #5b6270) 25%, transparent);
-  text-align: left;
+  text-align: start;
 }
 
-.dt-list th,
-.dt-list .dt-num,
-.dt-list .dt-owner {
+.dt-list td.dt-num,
+.dt-list td.dt-owner {
   white-space: nowrap;
+}
+
+.dt-list td.dt-shares {
+  white-space: normal;
+}
+
+/* 長い 1 語の見出し（sv「Utbetalningsdagar」など）は、ハイフンを入れるか語の途中で折り返す */
+.dt-list th {
+  hyphens: auto;
+  overflow-wrap: anywhere;
 }
 
 .dt-list th {
@@ -171,7 +183,7 @@
 }
 
 .dt-list .dt-num {
-  text-align: right;
+  text-align: end;
   font-variant-numeric: tabular-nums;
 }
 
@@ -471,7 +483,7 @@
 /* 銘柄一覧の削除ボタン */
 .dt-list .dt-delete-cell {
   width: 1%;
-  padding-right: 0;
+  padding-inline-end: 0;
 }
 
 .dt-button--danger {
@@ -497,8 +509,8 @@
 @media (max-width: 30rem) {
   .dt-list th,
   .dt-list td {
-    padding-right: var(--space-1, 0.25rem);
-    padding-left: var(--space-1, 0.25rem);
+    padding-inline-end: var(--space-1, 0.25rem);
+    padding-inline-start: var(--space-1, 0.25rem);
   }
 
   .dt-list td {
@@ -510,6 +522,6 @@
   }
 
   .dt-list .dt-delete-cell {
-    padding-left: 0;
+    padding-inline-start: 0;
   }
 }

@@ -5,13 +5,13 @@ import {
     type YearlyTotal,
     CHART_YEARS,
     MAX_PAYMENTS,
+    amountDecimal,
+    amountDecimals,
     annualTotals,
     buildPayments,
     buildYearlyTotal,
     calcAmount,
     filterByOwner,
-    formatAmount,
-    formatPerShare,
     isCurrency,
     isValidDate,
     isValidPayDate,
@@ -79,16 +79,17 @@ function yt(over: Partial<YearlyTotal>): YearlyTotal {
     };
 }
 
-test('formatAmount: JPY groups by three digits, others show two decimals', () => {
-    assert.equal(formatAmount(0, 'JPY'), '0円');
-    assert.equal(formatAmount(999, 'JPY'), '999円');
-    assert.equal(formatAmount(1000, 'JPY'), '1,000円');
-    assert.equal(formatAmount(1234567, 'JPY'), '1,234,567円');
-    assert.equal(formatAmount(123456, 'USD'), 'USD 1,234.56');
-    assert.equal(formatAmount(5, 'USD'), 'USD 0.05');
-    assert.equal(formatAmount(50, 'GBP'), 'GBP 0.50');
-    assert.equal(formatAmount(0, 'EUR'), 'EUR 0.00');
-    assert.equal(formatAmount(100_000_000_000, 'USD'), 'USD 1,000,000,000.00');
+test('amountDecimal writes the amount as a plain decimal string', () => {
+    assert.equal(amountDecimals('JPY'), 0);
+    assert.equal(amountDecimals('USD'), 2);
+    assert.equal(amountDecimal(0, 'JPY'), '0');
+    assert.equal(amountDecimal(1234, 'JPY'), '1234');
+    assert.equal(amountDecimal(1234567, 'JPY'), '1234567');
+    assert.equal(amountDecimal(123456, 'USD'), '1234.56');
+    assert.equal(amountDecimal(5, 'USD'), '0.05');
+    assert.equal(amountDecimal(50, 'GBP'), '0.50');
+    assert.equal(amountDecimal(0, 'EUR'), '0.00');
+    assert.equal(amountDecimal(100_000_000_000, 'USD'), '1000000000.00');
 });
 
 test('isCurrency / perShareDecimals', () => {
@@ -174,46 +175,47 @@ test('validateInput', () => {
         sharesText: '100',
         payments: [p('03-31', '37.5'), p('09-30', '40')],
     };
-    const perShareError = '1株当たり配当は0以上、小数第2位までで入力してください';
-    const dateError = '受取日を正しく選んでください';
-    assert.equal(validateInput(ok), null);
-    assert.equal(validateInput({ ...ok, ownerId: 0 }), '保有者を選んでください');
-    assert.equal(validateInput({ ...ok, ownerId: 1.5 }), '保有者を選んでください');
-    assert.equal(validateInput({ ...ok, currency: '' }), '通貨を選んでください');
-    assert.equal(validateInput({ ...ok, currency: 'XYZ' }), '通貨を選んでください');
+    const perShareError = { code: 'per_share_invalid', params: { decimals: 2 } };
+    const dateError = { code: 'pay_date_invalid' };
+    assert.deepEqual(validateInput(ok), null);
+    assert.deepEqual(validateInput({ ...ok, ownerId: 0 }), { code: 'owner_required' });
+    assert.deepEqual(validateInput({ ...ok, ownerId: 1.5 }), { code: 'owner_required' });
+    assert.deepEqual(validateInput({ ...ok, currency: '' }), { code: 'currency_required' });
+    assert.deepEqual(validateInput({ ...ok, currency: 'XYZ' }), { code: 'currency_required' });
     // 保有者の判定が先
-    assert.equal(validateInput({ ...ok, ownerId: 0, currency: 'XYZ' }), '保有者を選んでください');
-    assert.equal(validateInput({ ...ok, ticker: '  ' }), '銘柄コードを入力してください');
-    assert.equal(
-        validateInput({ ...ok, sharesText: '0' }),
-        '保有株数は1以上の整数で入力してください',
-    );
-    assert.equal(validateInput({ ...ok, payments: [] }), '受取日を1つ以上入力してください');
+    assert.deepEqual(validateInput({ ...ok, ownerId: 0, currency: 'XYZ' }), {
+        code: 'owner_required',
+    });
+    assert.deepEqual(validateInput({ ...ok, ticker: '  ' }), { code: 'ticker_required' });
+    assert.deepEqual(validateInput({ ...ok, sharesText: '0' }), { code: 'shares_invalid' });
+    assert.deepEqual(validateInput({ ...ok, payments: [] }), { code: 'payments_required' });
     const all = days(MAX_PAYMENTS + 1).map((d) => p(d));
-    assert.equal(validateInput({ ...ok, payments: all.slice(0, MAX_PAYMENTS) }), null);
-    assert.equal(validateInput({ ...ok, payments: all }), '受取日は24件までです');
-    assert.equal(validateInput({ ...ok, payments: [p('03-31'), p('02-30')] }), dateError);
-    assert.equal(validateInput({ ...ok, payments: [p('')] }), dateError);
+    assert.deepEqual(validateInput({ ...ok, payments: all.slice(0, MAX_PAYMENTS) }), null);
+    assert.deepEqual(validateInput({ ...ok, payments: all }), {
+        code: 'payments_too_many',
+        params: { max: 24 },
+    });
+    assert.deepEqual(validateInput({ ...ok, payments: [p('03-31'), p('02-30')] }), dateError);
+    assert.deepEqual(validateInput({ ...ok, payments: [p('')] }), dateError);
     // 年付きの日付は受け付けない
-    assert.equal(validateInput({ ...ok, payments: [p('2025-03-31')] }), dateError);
-    assert.equal(validateInput({ ...ok, payments: [p('03-31', '1.234')] }), perShareError);
-    assert.equal(validateInput({ ...ok, payments: [p('03-31', '')] }), perShareError);
+    assert.deepEqual(validateInput({ ...ok, payments: [p('2025-03-31')] }), dateError);
+    assert.deepEqual(validateInput({ ...ok, payments: [p('03-31', '1.234')] }), perShareError);
+    assert.deepEqual(validateInput({ ...ok, payments: [p('03-31', '')] }), perShareError);
     // 隣り合っていない重複も検出する
-    assert.equal(
-        validateInput({ ...ok, payments: [p('03-31'), p('09-30'), p('03-31')] }),
-        '同じ受取日が重複しています',
-    );
+    assert.deepEqual(validateInput({ ...ok, payments: [p('03-31'), p('09-30'), p('03-31')] }), {
+        code: 'pay_date_duplicate',
+    });
     // 0 円の受取日は許可
-    assert.equal(validateInput({ ...ok, payments: [p('03-31', '0')] }), null);
+    assert.deepEqual(validateInput({ ...ok, payments: [p('03-31', '0')] }), null);
 
     // JPY 以外は小数第4位まで
     const usd = { ...ok, currency: 'USD', payments: [p('02-13', '0.2475')] };
-    assert.equal(validateInput(usd), null);
-    assert.equal(
-        validateInput({ ...usd, payments: [p('02-13', '0.12345')] }),
-        '1株当たり配当は0以上、小数第4位までで入力してください',
-    );
-    assert.equal(validateInput({ ...ok, payments: [p('03-31', '0.123')] }), perShareError);
+    assert.deepEqual(validateInput(usd), null);
+    assert.deepEqual(validateInput({ ...usd, payments: [p('02-13', '0.12345')] }), {
+        code: 'per_share_invalid',
+        params: { decimals: 4 },
+    });
+    assert.deepEqual(validateInput({ ...ok, payments: [p('03-31', '0.123')] }), perShareError);
 });
 
 test('buildPayments sorts by date and floors each amount', () => {
@@ -530,19 +532,6 @@ test('sortForList orders by ticker, owner, id without mutating', () => {
         list.map((r) => r.id),
         ['c', 'b', 'z', 'a'],
     );
-});
-
-test('formatPerShare', () => {
-    assert.equal(formatPerShare(3750, 'JPY'), '37.5円');
-    assert.equal(formatPerShare(5, 'JPY'), '0.05円');
-    assert.equal(formatPerShare(120000, 'JPY'), '1,200円');
-    assert.equal(formatPerShare(0, 'JPY'), '0円');
-    assert.equal(formatPerShare(123456, 'JPY'), '1,234.56円');
-    assert.equal(formatPerShare(2475, 'USD'), 'USD 0.2475');
-    assert.equal(formatPerShare(10000, 'USD'), 'USD 1');
-    assert.equal(formatPerShare(2600, 'EUR'), 'EUR 0.26');
-    assert.equal(formatPerShare(10_000_000, 'USD'), 'USD 1,000');
-    assert.equal(formatPerShare(0, 'USD'), 'USD 0');
 });
 
 test('perShareInputText', () => {

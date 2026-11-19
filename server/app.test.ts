@@ -21,6 +21,14 @@ const USERS: Record<string, Me> = {
 const MEMBERS = new Set([1, 2, 3, 4]);
 
 let store: Store;
+
+interface ErrorBody {
+    error: string;
+    code: string;
+    params?: Record<string, number>;
+}
+
+const errorOf = async (res: Response): Promise<ErrorBody> => (await res.json()) as ErrorBody;
 let server: Server;
 let base = '';
 
@@ -154,34 +162,51 @@ test('POST validates input and owner', async () => {
         payments: [{ payDate: '06-30', perShareText: '1.234' }],
     });
     assert.equal(bad.status, 400);
-    assert.equal(
-        ((await bad.json()) as { error: string }).error,
-        '1株当たり配当は0以上、小数第2位までで入力してください',
-    );
+    assert.deepEqual(await errorOf(bad), {
+        error: 'Enter the dividend per share as 0 or more, with up to 2 decimal places.',
+        code: 'per_share_invalid',
+        params: { decimals: 2 },
+    });
     const dup = await write('POST', '/records', 'alice', {
         ...input,
         payments: [input.payments[1], input.payments[1]],
     });
-    assert.equal(((await dup.json()) as { error: string }).error, '同じ受取日が重複しています');
+    assert.deepEqual(await errorOf(dup), {
+        error: 'The same pay date appears more than once.',
+        code: 'pay_date_duplicate',
+    });
     const none = await write('POST', '/records', 'alice', { ...input, payments: [] });
-    assert.equal(
-        ((await none.json()) as { error: string }).error,
-        '受取日を1つ以上入力してください',
-    );
+    assert.equal((await errorOf(none)).code, 'payments_required');
+    const tooMany = await write('POST', '/records', 'alice', {
+        ...input,
+        payments: Array.from({ length: 25 }, (_, i) => ({
+            payDate: `01-${String(i + 1).padStart(2, '0')}`,
+            perShareText: '1',
+        })),
+    });
+    assert.deepEqual(await errorOf(tooMany), {
+        error: 'You can add up to 24 pay dates.',
+        code: 'payments_too_many',
+        params: { max: 24 },
+    });
     for (const payments of [undefined, 'x', [null], [{ payDate: '06-30' }]]) {
         const res = await write('POST', '/records', 'alice', { ...input, payments });
         assert.equal(res.status, 400, JSON.stringify(payments));
-        assert.equal(
-            ((await res.json()) as { error: string }).error,
-            'データの形式が正しくありません',
-        );
+        assert.deepEqual(await errorOf(res), {
+            error: 'The data format is invalid.',
+            code: 'bad_request',
+        });
     }
     assert.equal(
         (await write('POST', '/records', 'alice', { ...input, ownerId: '2' })).status,
         400,
     );
-    assert.equal((await write('POST', '/records', 'alice', { ...input, ownerId: 99 })).status, 400);
-    assert.equal((await write('POST', '/records', 'alice', { ...input, ownerId: 1 })).status, 403);
+    const stranger = await write('POST', '/records', 'alice', { ...input, ownerId: 99 });
+    assert.equal(stranger.status, 400);
+    assert.equal((await errorOf(stranger)).code, 'unknown_owner');
+    const other = await write('POST', '/records', 'alice', { ...input, ownerId: 1 });
+    assert.equal(other.status, 403);
+    assert.equal((await errorOf(other)).code, 'not_owner_add');
     const res = await fetch(`${base}/records`, {
         method: 'POST',
         headers: {
@@ -193,6 +218,7 @@ test('POST validates input and owner', async () => {
         body: JSON.stringify(input),
     });
     assert.equal(res.status, 415);
+    assert.equal((await errorOf(res)).code, 'unsupported_media_type');
     assert.equal(store.list().length, 2);
 });
 
@@ -236,10 +262,15 @@ test('PUT edits a record, keeping id and creation info', async () => {
         403,
     );
     assert.equal((await write('PUT', '/records/r-alice', 'reader', edit)).status, 403);
-    assert.equal((await write('PUT', '/records/missing', 'alice', edit)).status, 404);
+    const missing = await write('PUT', '/records/missing', 'alice', edit);
+    assert.equal(missing.status, 404);
+    assert.equal((await errorOf(missing)).code, 'record_not_found');
+    const othersRecord = await write('PUT', '/records/r-admin', 'alice', edit);
+    assert.equal((await errorOf(othersRecord)).code, 'not_owner_edit');
     // 一般ユーザーは保有者を他人に付け替えられない
     const reassign = await write('PUT', '/records/r-alice', 'alice', { ...edit, ownerId: 1 });
     assert.equal(reassign.status, 403);
+    assert.equal((await errorOf(reassign)).code, 'not_owner_add');
     const invalid = await write('PUT', '/records/r-alice', 'alice', { ...edit, sharesText: '0' });
     assert.equal(invalid.status, 400);
     assert.deepEqual(store.get('r-alice'), existing('r-alice', 2));
@@ -289,7 +320,10 @@ test('POST / PUT store the currency and compute amounts in its unit', async () =
     assert.equal(((await notString.json()) as { code: string }).code, 'bad_request');
     const unknown = await write('POST', '/records', 'alice', { ...usd, currency: 'XYZ' });
     assert.equal(unknown.status, 400);
-    assert.equal(((await unknown.json()) as { error: string }).error, '通貨を選んでください');
+    assert.deepEqual(await errorOf(unknown), {
+        error: 'Choose a currency.',
+        code: 'currency_required',
+    });
     // JPY では小数第3位以下を受け付けない
     const tooPrecise = await write('POST', '/records', 'alice', { ...usd, currency: 'JPY' });
     assert.equal(tooPrecise.status, 400);
@@ -310,7 +344,9 @@ test('POST / PUT store the currency and compute amounts in its unit', async () =
 
 test('DELETE enforces ownership unless admin', async () => {
     reset();
-    assert.equal((await write('DELETE', '/records/r-admin', 'alice')).status, 403);
+    const others = await write('DELETE', '/records/r-admin', 'alice');
+    assert.equal(others.status, 403);
+    assert.equal((await errorOf(others)).code, 'not_owner_delete');
     assert.equal((await write('DELETE', '/records/missing', 'alice')).status, 404);
     assert.equal((await write('DELETE', '/records/r-alice', 'reader')).status, 403);
     const own = await write('DELETE', '/records/r-alice', 'alice');
@@ -343,10 +379,11 @@ test('PUT /yearly-totals/<year> registers the total computed from stored records
     for (const bad of ['1999', '2101', 'abc', '26']) {
         const res = await write('PUT', `/yearly-totals/${bad}`, 'alice');
         assert.equal(res.status, 400, bad);
-        assert.equal(
-            ((await res.json()) as { error: string }).error,
-            '年は2000〜2100で指定してください',
-        );
+        assert.deepEqual(await errorOf(res), {
+            error: 'Enter a year from 2000 to 2100.',
+            code: 'invalid_year',
+            params: { min: 2000, max: 2100 },
+        });
     }
     assert.deepEqual(store.listYearlyTotals(), []);
 

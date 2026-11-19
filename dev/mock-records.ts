@@ -19,6 +19,7 @@ const BASE = '/api/extensions/dividend-tracker';
 const ENDPOINT = `${BASE}/records`;
 const YEARLY_ENDPOINT = `${BASE}/yearly-totals`;
 const TOKEN = 'dev-token';
+const NOT_FOUND = { error: 'Record not found.', code: 'record_not_found' };
 
 const rec = (
     id: string,
@@ -148,19 +149,29 @@ export function installMockFetch(scenario: Scenario): void {
 
         if (method === 'GET') {
             if (scenario === 'slow') await sleep(2000, signal);
-            if (scenario === 'error') return json(500, { error: '開発用: 取得エラー' });
+            if (scenario === 'error') {
+                return json(500, { error: 'A server error occurred.', code: 'internal' });
+            }
             return json(200, { data: records, yearlyTotals, me, csrfToken: TOKEN });
         }
 
         const headers = new Headers(init?.headers);
         if (headers.get('X-DT-CSRF') !== TOKEN) {
-            return json(403, { error: '画面を再読み込みしてから、もう一度お試しください' });
+            return json(403, { error: 'Reload the page and try again.', code: 'csrf' });
         }
-        if (!me.canWrite) return json(403, { error: '書き込み権限がありません' });
+        if (!me.canWrite) {
+            return json(403, { error: 'You have view-only access.', code: 'read_only' });
+        }
 
         if (url.startsWith(`${YEARLY_ENDPOINT}/`)) {
             const year = parseYear(decodeURIComponent(url.slice(YEARLY_ENDPOINT.length + 1)));
-            if (year === null) return json(400, { error: '年は2000〜2100で指定してください' });
+            if (year === null) {
+                return json(400, {
+                    error: 'Enter a year from 2000 to 2100.',
+                    code: 'invalid_year',
+                    params: { min: 2000, max: 2100 },
+                });
+            }
             const total = buildYearlyTotal(records, year, me.id, new Date().toISOString());
             yearlyTotals = [...yearlyTotals.filter((t) => t.year !== year), total].sort(
                 (a, b) => a.year - b.year,
@@ -172,9 +183,12 @@ export function installMockFetch(scenario: Scenario): void {
             const id = decodeURIComponent(url.slice(ENDPOINT.length + 1));
             const index = records.findIndex((r) => r.id === id);
             const current = records[index];
-            if (!current) return json(404, { error: '記録が見つかりません' });
+            if (!current) return json(404, NOT_FOUND);
             if (!me.isAdmin && current.ownerId !== me.id) {
-                return json(403, { error: '自分の記録だけ削除できます' });
+                return json(403, {
+                    error: "Only admins can delete other people's records.",
+                    code: 'not_owner_delete',
+                });
             }
             records.splice(index, 1);
             return json(200, { data: { id, deleted: true } });
@@ -184,9 +198,13 @@ export function installMockFetch(scenario: Scenario): void {
         // 省略時は JPY（サイドカーと同じ）
         const body = { ...parsed, currency: parsed.currency ?? 'JPY' } as RecordInput;
         const error = validateInput(body);
-        if (error !== null) return json(400, { error });
+        // 英語の文はサイドカーと違い省略する（画面は code で翻訳する）
+        if (error !== null) return json(400, { error: error.code, ...error });
         if (!me.isAdmin && body.ownerId !== me.id) {
-            return json(403, { error: '自分の記録だけ追加・編集できます' });
+            return json(403, {
+                error: 'Only admins can add records for other people.',
+                code: 'not_owner_add',
+            });
         }
         const shares = parseShares(body.sharesText) as number;
         const currency = body.currency as Currency;
@@ -204,9 +222,12 @@ export function installMockFetch(scenario: Scenario): void {
             const id = decodeURIComponent(url.slice(ENDPOINT.length + 1));
             const index = records.findIndex((r) => r.id === id);
             const current = records[index];
-            if (!current) return json(404, { error: '記録が見つかりません' });
+            if (!current) return json(404, NOT_FOUND);
             if (!me.isAdmin && current.ownerId !== me.id) {
-                return json(403, { error: '自分の記録だけ追加・編集できます' });
+                return json(403, {
+                    error: "Only admins can edit other people's records.",
+                    code: 'not_owner_edit',
+                });
             }
             const record: DividendRecord = { ...current, ...fields, updatedAt: now };
             records[index] = record;

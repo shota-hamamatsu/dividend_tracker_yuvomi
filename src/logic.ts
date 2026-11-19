@@ -85,10 +85,6 @@ function compareText(a: string, b: string): number {
     return a < b ? -1 : a > b ? 1 : 0;
 }
 
-function groupDigits(digits: string): string {
-    return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-}
-
 export function isCurrency(value: unknown): value is Currency {
     return typeof value === 'string' && (CURRENCIES as readonly string[]).includes(value);
 }
@@ -138,22 +134,41 @@ export function isValidPayDate(text: string): boolean {
     return /^\d{2}-\d{2}$/.test(text) && isValidDate(`2000-${text}`);
 }
 
-export function validateInput(input: RecordInput): string | null {
-    if (!isPositiveInt(input.ownerId)) return '保有者を選んでください';
+export type InputErrorCode =
+    | 'owner_required'
+    | 'currency_required'
+    | 'ticker_required'
+    | 'shares_invalid'
+    | 'payments_required'
+    | 'payments_too_many'
+    | 'pay_date_invalid'
+    | 'per_share_invalid'
+    | 'pay_date_duplicate';
+
+/** 入力エラー。文言は画面が code で翻訳する（locales の errors.<code>）。 */
+export interface InputError {
+    code: InputErrorCode;
+    params?: Record<string, number>; // payments_too_many: { max }、per_share_invalid: { decimals }
+}
+
+export function validateInput(input: RecordInput): InputError | null {
+    if (!isPositiveInt(input.ownerId)) return { code: 'owner_required' };
     const { currency } = input;
-    if (!isCurrency(currency)) return '通貨を選んでください';
-    if (input.ticker.trim() === '') return '銘柄コードを入力してください';
-    if (parseShares(input.sharesText) === null) return '保有株数は1以上の整数で入力してください';
-    if (input.payments.length === 0) return '受取日を1つ以上入力してください';
-    if (input.payments.length > MAX_PAYMENTS) return `受取日は${MAX_PAYMENTS}件までです`;
+    if (!isCurrency(currency)) return { code: 'currency_required' };
+    if (input.ticker.trim() === '') return { code: 'ticker_required' };
+    if (parseShares(input.sharesText) === null) return { code: 'shares_invalid' };
+    if (input.payments.length === 0) return { code: 'payments_required' };
+    if (input.payments.length > MAX_PAYMENTS) {
+        return { code: 'payments_too_many', params: { max: MAX_PAYMENTS } };
+    }
     for (const payment of input.payments) {
-        if (!isValidPayDate(payment.payDate)) return '受取日を正しく選んでください';
+        if (!isValidPayDate(payment.payDate)) return { code: 'pay_date_invalid' };
         if (parsePerShare(payment.perShareText, currency) === null) {
-            return `1株当たり配当は0以上、小数第${perShareDecimals(currency)}位までで入力してください`;
+            return { code: 'per_share_invalid', params: { decimals: perShareDecimals(currency) } };
         }
     }
     const dates = new Set(input.payments.map((p) => p.payDate));
-    if (dates.size !== input.payments.length) return '同じ受取日が重複しています';
+    if (dates.size !== input.payments.length) return { code: 'pay_date_duplicate' };
     return null;
 }
 
@@ -512,34 +527,31 @@ export function sortForList(records: DividendRecord[]): DividendRecord[] {
     );
 }
 
-/** 正の整数を、小数 decimals 桁の固定小数として整数部と小数部の文字列に分ける。 */
+/** 0 以上の整数を、小数 decimals 桁の固定小数として整数部と小数部の文字列に分ける。 */
 function splitFixed(value: number, decimals: number): [string, string] {
     const digits = String(value).padStart(decimals + 1, '0');
     return [digits.slice(0, digits.length - decimals), digits.slice(digits.length - decimals)];
 }
 
-/** 金額の表示（'1,234円'、'USD 1,234.56'）。 */
-export function formatAmount(amount: number, currency: Currency): string {
-    if (currency === 'JPY') return groupDigits(String(amount)) + '円';
-    const [whole, fraction] = splitFixed(amount, 2);
-    return `${currency} ${groupDigits(whole)}.${fraction}`;
+/** 金額の小数の桁数（JPY は 0、それ以外は 2）。 */
+export function amountDecimals(currency: Currency): number {
+    return currency === 'JPY' ? 0 : 2;
 }
 
-/** 1株配当の整数部と、末尾の 0 を取った小数部（無ければ ''）。 */
-function perShareParts(perShareCents: number, currency: Currency): [string, string] {
-    const [whole, fraction] = splitFixed(perShareCents, perShareDecimals(currency));
-    return [whole, fraction.replace(/0+$/, '')];
+/**
+ * 金額を小数の文字列にする（1234 JPY → '1234'、123456 USD → '1234.56'）。
+ * 3 桁区切り・通貨記号は付けない（表示は画面が Intl で整える）。
+ */
+export function amountDecimal(amount: number, currency: Currency): string {
+    const decimals = amountDecimals(currency);
+    if (decimals === 0) return String(amount);
+    const [whole, fraction] = splitFixed(amount, decimals);
+    return `${whole}.${fraction}`;
 }
 
 /** 1株配当を入力欄用の文字列に戻す（3750 JPY → '37.5'、2475 USD → '0.2475'）。 */
 export function perShareInputText(perShareCents: number, currency: Currency): string {
-    const [whole, fraction] = perShareParts(perShareCents, currency);
-    return fraction === '' ? whole : `${whole}.${fraction}`;
-}
-
-/** 1株配当の表示（'37.5円'、'USD 0.2475'）。 */
-export function formatPerShare(perShareCents: number, currency: Currency): string {
-    const [whole, fraction] = perShareParts(perShareCents, currency);
-    const number = groupDigits(whole) + (fraction === '' ? '' : `.${fraction}`);
-    return currency === 'JPY' ? `${number}円` : `${currency} ${number}`;
+    const [whole, fraction] = splitFixed(perShareCents, perShareDecimals(currency));
+    const trimmed = fraction.replace(/0+$/, '');
+    return trimmed === '' ? whole : `${whole}.${trimmed}`;
 }

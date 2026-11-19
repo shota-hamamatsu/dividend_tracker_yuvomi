@@ -8,11 +8,12 @@ TypeScript（strict）。`enum` / `namespace` / デコレータは使わない�
 
 | ファイル               | 役割                                                                        |
 | ---------------------- | --------------------------------------------------------------------------- |
-| `vite.dev.config.ts`   | 開発サーバー設定。`/api.js` を `dev/mock-api.ts` に差し替え、`/dev/` を開く |
+| `vite.dev.config.ts`   | 開発サーバー設定。`/api.js` を `dev/mock-api.ts`、`/i18n.js` を `dev/mock-i18n.ts` に差し替え、`/dev/` を開く |
 | `dev/index.html`       | 確認用ページ。`/modules/dividend-tracker/style.css` と `dev/tokens.css` を読む |
 | `dev/tokens.css`       | yuvomi のデザイントークンの近似値（ライト／ダーク）                         |
 | `dev/mock-api.ts`      | `export const api = { get }`。`/family/members` に偽の家族一覧を返す        |
 | `dev/mock-records.ts`  | `fetch` の偽物と、シナリオ定義                                              |
+| `dev/mock-i18n.ts`     | `/i18n.js` の偽物（`t`・`getLocale`・`getFormatLocale`・`setLocale`）。v0.6 で追加。仕様は `docs/specs/dividend-tracker-i18n.md`「画面確認ページ」 |
 | `dev/main.ts`          | シナリオ切り替え UI と `render` の呼び出し                                  |
 | `package.json`         | `"dev": "vite --config vite.dev.config.ts"` を追加                          |
 | `tsconfig.json`        | `include` に `dev` と `vite.dev.config.ts` を追加                           |
@@ -36,7 +37,7 @@ TypeScript（strict）。`enum` / `namespace` / デコレータは使わない�
 
 - `installMockFetch(scenario)`: `window.fetch` を差し替える。URL が `/api/extensions/dividend-tracker/` で始まるもの（`/records`・`/yearly-totals`）だけ処理し、それ以外は元の `fetch` へ渡す。
 - 初期データの受取日は月日（`MM-DD`）。`empty` 以外は、今年の 1〜5 年前の登録済み年別合計も持つ（v0.4 で追加）。
-- GET: `200 { data: records, yearlyTotals, me: { id, isAdmin, canWrite }, csrfToken: 'dev-token' }`。`error` は `500 { error: '開発用: 取得エラー' }`、`slow` は 2 秒待ってから通常応答。
+- GET: `200 { data: records, yearlyTotals, me: { id, isAdmin, canWrite }, csrfToken: 'dev-token' }`。`error` は `500 { error, code: 'internal' }`（v0.6 からエラー応答はサイドカーと同じ `{ error, code, params? }`）、`slow` は 2 秒待ってから通常応答。
 - POST: ヘッダー `X-DT-CSRF` が `dev-token` でなければ `403 { error: '画面を再読み込みしてから、もう一度お試しください' }`。`me.canWrite` が false なら `403 { error: '書き込み権限がありません' }`。
   一般ユーザーで `ownerId` が自分以外なら `403 { error: '自分の記録だけ追加できます' }`。
   OK なら、本文に `id`（連番の文字列）を付けた記録を保存して `201 { data: record }`。保存先はメモリ上の配列のみ（再描画・再読み込みで初期データに戻る）。
@@ -49,7 +50,8 @@ TypeScript（strict）。`enum` / `namespace` / デコレータは使わない�
 
 ## 確認用ページ（`dev/main.ts`）
 
-- `dev/index.html` に `<header id="dev-bar">`（シナリオ選択とテーマ切り替え）と `<main id="app">` を置く。
+- `dev/index.html` に `<header id="dev-bar">`（シナリオ選択・テーマ切り替え・言語の選択）と `<main id="app">` を置く。
+- 言語の選択（v0.6）は 27 言語。初期値は URL の `?lang=`、無ければ `ja`。変えると `setLocale` を呼び、URL に `scenario` と `lang` を残す。
 - テーマ切り替えは `select`（`ライト` / `ダーク`）。`document.documentElement.dataset['theme']` に `light` / `dark` を入れる。`dev/tokens.css` は `:root` をライト、`:root[data-theme='dark']` をダークの値にする。
 - `#app` に対し、前回の `AbortController` を `abort()` してから新しい `AbortController` で `render(#app, { signal })` を呼ぶ。`installMockFetch` はシナリオ変更のたびに呼び直す（元の `fetch` は 1 度だけ保存して使い回す）。
 - `src/index.ts` は直接 import する（`../src/index.ts`）。

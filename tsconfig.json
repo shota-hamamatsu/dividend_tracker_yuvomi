@@ -3,7 +3,7 @@
         "target": "ES2022",
         "module": "ESNext",
         "moduleResolution": "bundler",
-        "lib": ["ES2022", "DOM", "DOM.Iterable"],
+        "lib": ["ES2022", "ES2023.Intl", "DOM", "DOM.Iterable"],
         "strict": true,
         "noUncheckedIndexedAccess": true,
         "erasableSyntaxOnly": true,
@@ -11,7 +11,10 @@
         "noEmit": true,
         "skipLibCheck": true,
         "types": ["node"],
-        "paths": { "/api.js": ["./src/types/api.d.ts"] }
+        "paths": {
+            "/api.js": ["./src/types/api.d.ts"],
+            "/i18n.js": ["./src/types/i18n.d.ts"]
+        }
     },
     "include": [
         "src",

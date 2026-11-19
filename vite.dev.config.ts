@@ -10,6 +10,10 @@ export default defineConfig({
                 find: /^\/api\.js$/,
                 replacement: fileURLToPath(new URL('./dev/mock-api.ts', import.meta.url)),
             },
+            {
+                find: /^\/i18n\.js$/,
+                replacement: fileURLToPath(new URL('./dev/mock-i18n.ts', import.meta.url)),
+            },
         ],
     },
     server: { open: '/dev/' },

@@ -1,19 +1,39 @@
 {
   "manifestVersion": 1,
   "id": "dividend-tracker",
-  "name": "配当管理",
-  "version": "0.5.0",
-  "description": "家族の配当（分配金）を保有者・株数とともに記録し、受取日ごとの1株配当から年・月ごとの合計を確認できる。サイドカーサービスが必要。",
+  "name": "Dividend Tracker",
+  "version": "0.6.0",
+  "description": "Record family dividends with holder and share count, and see yearly and monthly totals from the dividend per share on each pay date. Requires the sidecar service.",
   "entry": "index.js",
   "style": "style.css",
   "icon": "wallet",
   "accent": "#16A34A",
-  "menu": { "show": true, "label": "配当", "icon": "wallet", "order": 100 },
-  "page": { "composition": "data", "width": "content", "navigation": "standard", "responsive": "standard" },
+  "i18n": {
+    "defaultLocale": "en"
+  },
+  "menu": {
+    "show": true,
+    "label": "Dividends",
+    "icon": "wallet",
+    "order": 100,
+    "labelKey": "menu"
+  },
+  "page": {
+    "composition": "data",
+    "width": "content",
+    "navigation": "standard",
+    "responsive": "standard"
+  },
   "capabilities": {
     "permissions": {
-      "module": { "label": "配当管理", "icon": "wallet" }
+      "module": {
+        "label": "Dividend Tracker",
+        "icon": "wallet",
+        "labelKey": "module"
+      }
     },
-    "api": { "prefix": "/api/extensions/dividend-tracker" }
+    "api": {
+      "prefix": "/api/extensions/dividend-tracker"
+    }
   }
 }

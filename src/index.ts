@@ -1,4 +1,5 @@
 import { api } from '/api.js';
+import * as i18n from '/i18n.js';
 import {
     type Breakdown,
     type Currency,
@@ -11,9 +12,10 @@ import {
     MAX_PAYMENTS,
     MAX_YEAR,
     MIN_YEAR,
+    amountDecimal,
+    amountDecimals,
     annualTotals,
     filterByOwner,
-    formatAmount,
     isValidRecord,
     isValidYearlyTotal,
     monthlyTotals,
@@ -28,22 +30,113 @@ import {
 
 const ENDPOINT = '/api/extensions/dividend-tracker/records';
 const YEARLY_ENDPOINT = '/api/extensions/dividend-tracker/yearly-totals';
-const EMPTY_TEXT = 'まだ記録がありません';
-const UNKNOWN_USER = '（不明なユーザー）';
+const KEY_PREFIX = 'extensions.dividend-tracker.';
 const OWNER_COLORS = 8; // style.css の --dt-owner-1〜8
 
-const CURRENCY_NAMES: Record<Currency, string> = {
-    JPY: '円（JPY）',
-    USD: '米ドル（USD）',
-    EUR: 'ユーロ（EUR）',
-    GBP: '英ポンド（GBP）',
-    AUD: '豪ドル（AUD）',
-    CAD: 'カナダドル（CAD）',
-    CHF: 'スイスフラン（CHF）',
-    HKD: '香港ドル（HKD）',
-    CNY: '人民元（CNY）',
-    SGD: 'シンガポールドル（SGD）',
-};
+type Params = Record<string, string | number>;
+
+/** モジュールの文言（locales/<言語>.json のキー）。 */
+function tr(key: string, params?: Params): string {
+    return i18n.t(KEY_PREFIX + key, params);
+}
+
+/** 訳があれば訳、無ければ（t がキーのまま返したら）fallback のキーの訳。 */
+function trOr(key: string, fallbackKey: string, params?: Params): string {
+    const text = tr(key, params);
+    return text === KEY_PREFIX + key ? tr(fallbackKey) : text;
+}
+
+/** Intl に渡せる言語タグか。渡せなければ 'en'。 */
+function safeLocale(tag: string | undefined): string {
+    if (!tag) return 'en';
+    try {
+        return Intl.getCanonicalLocales(tag)[0] ?? 'en';
+    } catch {
+        return 'en';
+    }
+}
+
+/** 表示言語（日付・文言）と数値の地域（数値・金額）。draw() のたびに取り直す。 */
+function currentLocales(): { ui: string; format: string } {
+    const ui = safeLocale(i18n.getLocale?.() || document.documentElement.lang || 'en');
+    const format = safeLocale(i18n.getFormatLocale?.() || ui);
+    return { ui, format };
+}
+
+const intlCache = new Map<string, Intl.NumberFormat | Intl.DateTimeFormat>();
+
+function numberFormat(locale: string, options: Intl.NumberFormatOptions = {}): Intl.NumberFormat {
+    const key = `n\u0000${locale}\u0000${JSON.stringify(options)}`;
+    let fmt = intlCache.get(key);
+    if (!(fmt instanceof Intl.NumberFormat)) {
+        fmt = new Intl.NumberFormat(locale, options);
+        intlCache.set(key, fmt);
+    }
+    return fmt;
+}
+
+function dateFormat(locale: string, options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+    const key = `d\u0000${locale}\u0000${JSON.stringify(options)}`;
+    let fmt = intlCache.get(key);
+    if (!(fmt instanceof Intl.DateTimeFormat)) {
+        fmt = new Intl.DateTimeFormat(locale, { ...options, timeZone: 'UTC' });
+        intlCache.set(key, fmt);
+    }
+    return fmt;
+}
+
+/** 言語に合わせた書き方（表示だけ。金額の計算には使わない）。 */
+interface Format {
+    money(amount: number, currency: Currency): string;
+    integer(value: number): string;
+    payDate(payDate: string): string; // 'MM-DD' → '6/30'、'30.6.' など
+    monthShort(month: number): string;
+    monthLong(month: number): string;
+    yearLabel(year: number): string; // 区切りなしの数字
+    yearName(year: number): string; // '2026年'、'2026'
+    currencyName(currency: Currency): string;
+    join(items: string[]): string;
+}
+
+function makeFormat(): Format {
+    const { ui, format } = currentLocales();
+    const day = (month: number, date = 1): Date => new Date(Date.UTC(2000, month - 1, date));
+    let names: Intl.DisplayNames | null = null;
+    try {
+        names = new Intl.DisplayNames(ui, { type: 'currency' });
+    } catch {
+        names = null;
+    }
+    return {
+        money(amount, currency) {
+            const digits = amountDecimals(currency);
+            const fmt = numberFormat(format, {
+                style: 'currency',
+                currency,
+                minimumFractionDigits: digits,
+                maximumFractionDigits: digits,
+            });
+            // 小数の文字列を渡す（Intl が文字列のまま整えるので浮動小数点の誤差が出ない）
+            return fmt.format(amountDecimal(amount, currency) as Intl.StringNumericLiteral);
+        },
+        integer: (value) => numberFormat(format).format(value),
+        payDate(payDate) {
+            const [month = '1', date = '1'] = payDate.split('-');
+            const fmt = dateFormat(ui, { month: 'numeric', day: 'numeric' });
+            return fmt.format(day(Number(month), Number(date)));
+        },
+        monthShort: (month) => dateFormat(ui, { month: 'short' }).format(day(month)),
+        monthLong: (month) => dateFormat(ui, { month: 'long' }).format(day(month)),
+        yearLabel: (year) => numberFormat(format, { useGrouping: false }).format(year),
+        yearName: (year) =>
+            dateFormat(ui, { year: 'numeric' }).format(new Date(Date.UTC(year, 0, 1))),
+        currencyName(currency) {
+            const name = names?.of(currency) ?? currency;
+            return tr('currency.option', { name, code: currency });
+        },
+        join: (items) => items.join(tr('common.separator')),
+    };
+}
 
 /** 棒グラフの 1 本（月別・年別で共通）。 */
 interface Bar extends Breakdown {
@@ -99,50 +192,30 @@ function button(text: string, action: string, className?: string): HTMLButtonEle
 }
 
 /** 通貨の select（選択肢は通貨の表示名、値は通貨コード）。 */
-function currencySelect(name: string, choices: readonly Currency[], selected: Currency) {
-    const select = el('select');
-    select.name = name;
-    for (const currency of choices) {
-        select.appendChild(option(currency, CURRENCY_NAMES[currency], currency === selected));
-    }
-    return select;
-}
-
-/** 通貨ごとの合計を '1,234円、USD 56.78' のようにつなぐ（空なら '0円'）。 */
-function formatTotals(totals: CurrencyBreakdown[]): string {
-    return totals.length === 0
-        ? formatAmount(0, 'JPY')
-        : totals.map((t) => formatAmount(t.total, t.currency)).join('、');
-}
-
-/** 受取日の一覧表示（'3/31、9/30'）。 */
-function formatPayDates(payments: Payment[]): string {
-    return payments
-        .map(({ payDate }) => {
-            const [month, day] = payDate.split('-');
-            return `${Number(month)}/${Number(day)}`;
-        })
-        .join('、');
-}
-
-/** 月・日の select（value は 2 桁、先頭は未選択の空の選択肢）。 */
-function numberSelect(
+function currencySelect(
+    fmt: Format,
     name: string,
-    ariaLabel: string,
-    placeholder: string,
-    count: number,
-    unit: string,
-    selected: string,
+    choices: readonly Currency[],
+    selected: Currency,
 ): HTMLSelectElement {
     const select = el('select');
     select.name = name;
-    select.setAttribute('aria-label', ariaLabel);
-    select.appendChild(option('', placeholder, selected === ''));
-    for (let n = 1; n <= count; n++) {
-        const value = String(n).padStart(2, '0');
-        select.appendChild(option(value, `${n}${unit}`, value === selected));
+    for (const currency of choices) {
+        select.appendChild(option(currency, fmt.currencyName(currency), currency === selected));
     }
     return select;
+}
+
+/** 通貨ごとの合計をつなぐ（空なら 0 円）。 */
+function formatTotals(fmt: Format, totals: CurrencyBreakdown[]): string {
+    return totals.length === 0
+        ? fmt.money(0, 'JPY')
+        : fmt.join(totals.map((t) => fmt.money(t.total, t.currency)));
+}
+
+/** 受取日の一覧表示（'3/31、9/30' など）。 */
+function formatPayDates(fmt: Format, payments: Payment[]): string {
+    return fmt.join(payments.map(({ payDate }) => fmt.payDate(payDate)));
 }
 
 /** 一覧・確認文で使う銘柄の表示（'7203 トヨタ自動車'、name が空なら ticker だけ）。 */
@@ -163,12 +236,20 @@ function parseMembers(body: unknown): Map<number, string> {
     return map;
 }
 
-async function errorMessage(res: Response, fallback: string): Promise<string> {
+/** 応答の code を翻訳する。訳が無ければ fallbackKey の訳（応答の英語の error は出さない）。 */
+async function errorMessage(res: Response, fallbackKey: string): Promise<string> {
     try {
-        const body = (await res.json()) as { error?: unknown };
-        return typeof body.error === 'string' ? body.error : fallback;
+        const body = (await res.json()) as { code?: unknown; params?: unknown };
+        if (typeof body.code !== 'string' || !/^\w+$/.test(body.code)) return tr(fallbackKey);
+        const params: Params = {};
+        if (typeof body.params === 'object' && body.params !== null) {
+            for (const [name, value] of Object.entries(body.params)) {
+                if (typeof value === 'number' || typeof value === 'string') params[name] = value;
+            }
+        }
+        return trOr(`errors.${body.code}`, fallbackKey, params);
     } catch {
-        return fallback;
+        return tr(fallbackKey);
     }
 }
 
@@ -189,8 +270,10 @@ export async function render(
     let listError = '';
     let dialog: HTMLDialogElement | null = null;
     let editing: DividendRecord | null = null;
+    let fmt = makeFormat();
+    let loaded = false;
 
-    const memberName = (id: number): string => members.get(id) ?? UNKNOWN_USER;
+    const memberName = (id: number): string => members.get(id) ?? tr('common.unknown_user');
     /** 保有者の色の番号。家族一覧の取得順で 1〜OWNER_COLORS、それ以外は OWNER_COLORS + 1（other）。 */
     const colorSlot = (ownerId: number): number => {
         const index = [...members.keys()].indexOf(ownerId);
@@ -222,10 +305,15 @@ export async function render(
 
     const shell = (...sections: HTMLElement[]): void => {
         const toolbar = el('div', 'page-toolbar');
-        toolbar.appendChild(el('h1', 'page-toolbar__title', '配当管理'));
+        toolbar.appendChild(el('h1', 'page-toolbar__title', tr('title')));
         const body = el('div', 'app-page__body');
         body.append(...sections);
-        container.replaceChildren(toolbar, body);
+        // 開いているダイアログは残す（言語の切り替えで書き直しても閉じないように）。
+        // replaceChildren で外すと close が来ないまま dialog が残り、次のダイアログが開けなくなる
+        for (const child of [...container.childNodes]) {
+            if (child !== dialog) child.remove();
+        }
+        container.prepend(toolbar, body);
     };
 
     const buildTotals = (visible: DividendRecord[]): HTMLElement => {
@@ -233,12 +321,12 @@ export async function render(
         const totals = el('div', 'dt-totals');
         const byCurrency = annualTotals(visible);
         if (byCurrency.length === 0) {
-            totals.appendChild(el('p', 'dt-total', formatAmount(0, 'JPY')));
+            totals.appendChild(el('p', 'dt-total', fmt.money(0, 'JPY')));
         }
         for (const { currency, total } of byCurrency) {
-            totals.appendChild(el('p', 'dt-total', formatAmount(total, currency)));
+            totals.appendChild(el('p', 'dt-total', fmt.money(total, currency)));
         }
-        section.append(el('h2', undefined, '合計額'), totals);
+        section.append(el('h2', undefined, tr('totals.title')), totals);
         if (!me.canWrite) return section;
 
         const year = input('number', 'registerYear', registerYear);
@@ -247,10 +335,13 @@ export async function render(
         year.step = '1';
         year.inputMode = 'numeric';
         const register = el('div', 'dt-register');
-        register.append(labeled('登録する年', year), button('確定', 'register-year'));
+        register.append(
+            labeled(tr('totals.register_year'), year),
+            button(tr('totals.register'), 'register-year'),
+        );
         section.appendChild(register);
         if (filter !== null) {
-            section.appendChild(el('p', 'dt-note', '登録されるのは全員分の合計です'));
+            section.appendChild(el('p', 'dt-note', tr('totals.all_owners_note')));
         }
         const message = el('p', 'dt-register__message', totalsMessage);
         message.setAttribute('aria-live', 'polite');
@@ -263,37 +354,37 @@ export async function render(
         const heading = el('div', 'dt-heading');
         const select = el('select');
         select.name = 'filter';
-        select.appendChild(option('', 'すべて', filter === null));
+        select.appendChild(option('', tr('list.filter_all'), filter === null));
         for (const [id, name] of members) {
             select.appendChild(option(String(id), name, filter === id));
         }
-        const filterField = labeled('保有者', select);
+        const filterField = labeled(tr('list.filter'), select);
         filterField.className = 'dt-filter';
-        heading.append(el('h2', undefined, '銘柄一覧'), filterField);
-        if (me.canWrite) heading.appendChild(button('追加', 'add'));
+        heading.append(el('h2', undefined, tr('list.title')), filterField);
+        if (me.canWrite) heading.appendChild(button(tr('list.add'), 'add'));
         section.appendChild(heading);
-        if (!me.canWrite) section.appendChild(el('p', undefined, '閲覧のみの権限です'));
+        if (!me.canWrite) section.appendChild(el('p', undefined, tr('list.read_only')));
         section.appendChild(el('p', 'dt-error', listError));
 
         if (visible.length === 0) {
-            section.appendChild(el('p', undefined, EMPTY_TEXT));
+            section.appendChild(el('p', undefined, tr('list.empty')));
             return section;
         }
         const table = el('table', 'dt-list');
         const headRow = el('tr');
         if (me.canWrite) {
             const th = el('th', 'dt-delete-cell');
-            th.setAttribute('aria-label', '削除');
+            th.setAttribute('aria-label', tr('list.delete'));
             headRow.appendChild(th);
         }
-        for (const [text, className] of [
-            ['保有者', undefined],
-            ['銘柄', undefined],
-            ['保有株数', 'dt-num'],
-            ['受取日', undefined],
-            ['合計', 'dt-num'],
+        for (const [key, className] of [
+            ['list.col_owner', undefined],
+            ['list.col_ticker', undefined],
+            ['list.col_shares', 'dt-num'],
+            ['list.col_pay_dates', undefined],
+            ['list.col_total', 'dt-num'],
         ] as const) {
-            headRow.appendChild(el('th', className, text));
+            headRow.appendChild(el('th', className, tr(key)));
         }
         table.appendChild(el('thead')).appendChild(headRow);
 
@@ -305,19 +396,23 @@ export async function render(
                 const cell = el('td', 'dt-delete-cell');
                 if (canEdit(record)) {
                     const remove = button('×', 'delete', 'dt-button--danger');
-                    remove.title = '削除';
+                    remove.title = tr('list.delete');
                     remove.dataset['id'] = record.id;
-                    remove.setAttribute('aria-label', `${label} を削除`);
+                    remove.setAttribute('aria-label', tr('list.delete_label', { label }));
                     cell.appendChild(remove);
                 }
                 row.appendChild(cell);
             }
+            const shares = tr('list.shares', {
+                count: record.shares,
+                shares: fmt.integer(record.shares),
+            });
             row.append(
                 el('td', 'dt-owner', memberName(record.ownerId)),
                 el('td', undefined, label),
-                el('td', 'dt-num', `${record.shares.toLocaleString('ja-JP')}株`),
-                el('td', undefined, formatPayDates(record.payments)),
-                el('td', 'dt-num', formatAmount(recordTotal(record), record.currency)),
+                el('td', 'dt-num dt-shares', shares),
+                el('td', undefined, formatPayDates(fmt, record.payments)),
+                el('td', 'dt-num', fmt.money(recordTotal(record), record.currency)),
             );
             if (canEdit(record)) {
                 row.className = 'dt-row--editable';
@@ -333,10 +428,12 @@ export async function render(
 
     /** 保有者ごとの色で積み上げた棒グラフ・ツールチップ・凡例（月別・年別で共通）。 */
     const buildBars = (bars: Bar[], chartLabel: string, currency: Currency): HTMLElement => {
-        const money = (amount: number): string => formatAmount(amount, currency);
+        const money = (amount: number): string => fmt.money(amount, currency);
         const max = Math.max(...bars.map((b) => b.total));
         const byColor = (a: { ownerId: number }, b: { ownerId: number }): number =>
             colorSlot(a.ownerId) - colorSlot(b.ownerId);
+        const ownerAmount = (ownerId: number, amount: number): string =>
+            tr('chart.owner_amount', { owner: memberName(ownerId), amount: money(amount) });
 
         const wrap = el('div', 'dt-chart-wrap');
         const chart = el('ol', 'dt-chart');
@@ -345,11 +442,13 @@ export async function render(
         for (const { label, name, key, value, total, owners } of bars) {
             const sorted = [...owners].sort(byColor);
             const item = el('li', 'dt-chart__month');
-            const breakdown = sorted
-                .map((o) => `${memberName(o.ownerId)} ${money(o.total)}`)
-                .join('、');
-            const text = `${name}: ${money(total)}`;
-            item.setAttribute('aria-label', breakdown === '' ? text : `${text}（${breakdown}）`);
+            const breakdown = fmt.join(sorted.map((o) => ownerAmount(o.ownerId, o.total)));
+            item.setAttribute(
+                'aria-label',
+                sorted.length === 0
+                    ? tr('chart.bar', { name, amount: money(total) })
+                    : tr('chart.bar_breakdown', { name, amount: money(total), breakdown }),
+            );
             const track = el('div', 'dt-chart__track');
             const bar = el('div', 'dt-chart__bar');
             // 表示用の比率。金額の計算には使わない
@@ -381,7 +480,7 @@ export async function render(
             const li = el('li');
             li.append(
                 el('span', `dt-legend__swatch ${colorClass(ownerId)}`),
-                document.createTextNode(`${memberName(ownerId)} ${money(total)}`),
+                document.createTextNode(ownerAmount(ownerId, total)),
             );
             legend.appendChild(li);
         }
@@ -391,11 +490,14 @@ export async function render(
 
     const buildMonthly = (visible: DividendRecord[], choices: Currency[]): HTMLElement => {
         const section = el('section', 'page-section');
-        const title = el('h2', undefined, '月別配当額');
+        const title = el('h2', undefined, tr('chart.monthly'));
         if (choices.length >= 2) {
             // 通貨の選択は月別・年別の両方に効く
             const heading = el('div', 'dt-heading');
-            const field = labeled('通貨', currencySelect('chartCurrency', choices, chartCurrency));
+            const field = labeled(
+                tr('chart.currency'),
+                currencySelect(fmt, 'chartCurrency', choices, chartCurrency),
+            );
             field.className = 'dt-filter';
             heading.append(title, field);
             section.appendChild(heading);
@@ -403,40 +505,41 @@ export async function render(
             section.appendChild(title);
         }
         if (visible.length === 0) {
-            section.appendChild(el('p', undefined, EMPTY_TEXT));
+            section.appendChild(el('p', undefined, tr('list.empty')));
             return section;
         }
         const bars = monthlyTotals(visible, chartCurrency).map((m) => ({
             ...m,
-            label: `${m.month}月`,
-            name: `${m.month}月`,
+            label: fmt.monthShort(m.month),
+            name: fmt.monthLong(m.month),
             key: 'month' as const,
             value: String(m.month),
         }));
-        section.appendChild(buildBars(bars, '月別配当額', chartCurrency));
+        section.appendChild(buildBars(bars, tr('chart.monthly'), chartCurrency));
         return section;
     };
 
     const buildYearly = (): HTMLElement => {
         const section = el('section', 'page-section');
-        section.appendChild(el('h2', undefined, '年別配当額'));
+        section.appendChild(el('h2', undefined, tr('chart.yearly')));
         const endYear = Math.max(new Date().getFullYear(), ...yearlyTotals.map((t) => t.year));
         const bars = yearlyChart(yearlyTotals, endYear, filter, chartCurrency).map((b) => ({
             ...b,
-            label: String(b.year),
-            name: `${b.year}年`,
+            label: fmt.yearLabel(b.year),
+            name: fmt.yearName(b.year),
             key: 'year' as const,
             value: String(b.year),
         }));
         if (bars.every((b) => b.total === 0)) {
-            section.appendChild(el('p', undefined, 'まだ登録された年がありません'));
+            section.appendChild(el('p', undefined, tr('chart.no_years')));
             return section;
         }
-        section.appendChild(buildBars(bars, '年別配当額', chartCurrency));
+        section.appendChild(buildBars(bars, tr('chart.yearly'), chartCurrency));
         return section;
     };
 
     const draw = (): void => {
+        fmt = makeFormat();
         const visible = filterByOwner(records, filter);
         // 候補は保有者フィルタに関係なく全記録から（フィルタで候補が変わらないように）
         const choices = usedCurrencies(records, yearlyTotals);
@@ -452,6 +555,24 @@ export async function render(
 
     // ---- ダイアログ ----
 
+    /** 月・日の select（value は 2 桁、先頭は未選択の空の選択肢）。 */
+    const dateSelect = (name: string, ariaKey: string, selected: string): HTMLSelectElement => {
+        const isMonth = name === 'payMonth';
+        const select = el('select');
+        select.name = name;
+        select.setAttribute('aria-label', tr(ariaKey));
+        const placeholder = tr(isMonth ? 'field.month_placeholder' : 'field.day_placeholder');
+        select.appendChild(option('', placeholder, selected === ''));
+        for (let n = 1; n <= (isMonth ? 12 : 31); n++) {
+            const value = String(n).padStart(2, '0');
+            const text = isMonth
+                ? fmt.monthLong(n)
+                : tr('field.day_option', { day: fmt.integer(n) });
+            select.appendChild(option(value, text, value === selected));
+        }
+        return select;
+    };
+
     const paymentRow = (payDate = '', perShare = ''): HTMLElement => {
         const row = el('div', 'dt-payment');
         const perShareInput = input('text', 'perShare', perShare);
@@ -459,13 +580,13 @@ export async function render(
         const [month = '', day = ''] = payDate.split('-');
         const payday = el('div', 'dt-payday');
         payday.append(
-            numberSelect('payMonth', '受取日の月', '月', 12, '月', month),
-            numberSelect('payDay', '受取日の日', '日', 31, '日', day),
+            dateSelect('payMonth', 'field.pay_month', month),
+            dateSelect('payDay', 'field.pay_day', day),
         );
         row.append(
-            labeled('受取日', payday),
-            labeled('1株当たり配当', perShareInput),
-            button('削除', 'remove-payment', 'dt-button--secondary'),
+            labeled(tr('field.pay_date'), payday),
+            labeled(tr('field.per_share'), perShareInput),
+            button(tr('dialog.remove_payment'), 'remove-payment', 'dt-button--secondary'),
         );
         return row;
     };
@@ -485,6 +606,7 @@ export async function render(
     const openDialog = (record: DividendRecord | null): void => {
         if (dialog) return;
         editing = record;
+        fmt = makeFormat();
 
         const owner = el('select');
         owner.name = 'ownerId';
@@ -500,7 +622,7 @@ export async function render(
         shares.step = '1';
 
         const payments = el('fieldset', 'dt-payments');
-        payments.appendChild(el('legend', undefined, '受取日と1株当たり配当'));
+        payments.appendChild(el('legend', undefined, tr('field.payments')));
         if (record) {
             for (const p of record.payments) {
                 payments.appendChild(
@@ -510,25 +632,30 @@ export async function render(
         } else {
             payments.appendChild(paymentRow());
         }
-        payments.appendChild(button('受取日を追加', 'add-payment', 'dt-button--secondary'));
+        payments.appendChild(
+            button(tr('dialog.add_payment'), 'add-payment', 'dt-button--secondary'),
+        );
 
-        const submit = el('button', undefined, record ? '保存' : '追加');
+        const submit = el(
+            'button',
+            undefined,
+            tr(record ? 'dialog.submit_save' : 'dialog.submit_add'),
+        );
         submit.type = 'submit';
         const actions = el('div', 'dt-actions');
-        actions.append(button('キャンセル', 'cancel', 'dt-button--secondary'), submit);
+        actions.append(button(tr('dialog.cancel'), 'cancel', 'dt-button--secondary'), submit);
 
         const form = el('form', 'dt-form');
-        const ownerField = labeled('保有者', owner);
+        const ownerField = labeled(tr('field.owner'), owner);
         ownerField.className = 'dt-field--wide';
-        const sharesField = labeled('保有株数', shares);
         const currencyField = labeled(
-            '通貨',
-            currencySelect('currency', CURRENCIES, record?.currency ?? 'JPY'),
+            tr('field.currency'),
+            currencySelect(fmt, 'currency', CURRENCIES, record?.currency ?? 'JPY'),
         );
         form.append(
-            labeled('銘柄コード', input('text', 'ticker', record?.ticker ?? '')),
-            labeled('銘柄名', input('text', 'name', record?.name ?? '')),
-            sharesField,
+            labeled(tr('field.ticker'), input('text', 'ticker', record?.ticker ?? '')),
+            labeled(tr('field.name'), input('text', 'name', record?.name ?? '')),
+            labeled(tr('field.shares'), shares),
             currencyField,
             ownerField,
             payments,
@@ -538,7 +665,10 @@ export async function render(
         refreshPaymentButtons(form);
 
         dialog = el('dialog', 'dt-dialog');
-        dialog.append(el('h2', undefined, record ? '配当を編集' : '配当を追加'), form);
+        dialog.append(
+            el('h2', undefined, tr(record ? 'dialog.edit_title' : 'dialog.add_title')),
+            form,
+        );
         const opened = dialog;
         opened.addEventListener(
             'close',
@@ -561,7 +691,7 @@ export async function render(
         const months = data.getAll('payMonth').map(String);
         const days = data.getAll('payDay').map(String);
         const perShares = data.getAll('perShare').map(String);
-        // 月か日が空なら空文字（validateInput が「受取日を正しく選んでください」を返す）
+        // 月か日が空なら空文字（validateInput が pay_date_invalid を返す）
         const dates = months.map((month, i) => {
             const day = days[i] ?? '';
             return month !== '' && day !== '' ? `${month}-${day}` : '';
@@ -576,15 +706,16 @@ export async function render(
         };
     };
 
-    const showFailure = (message = 'データを読み込めませんでした'): void => {
+    const showFailure = (message = tr('errors.load_failed')): void => {
         const section = el('section', 'page-section');
-        const retry = button('再読み込み', 'reload');
+        const retry = button(tr('reload'), 'reload');
         section.append(el('p', 'dt-error', message), retry);
         shell(section);
     };
 
     const load = async (): Promise<void> => {
-        shell(el('p', undefined, '読み込み中…'));
+        loaded = false;
+        shell(el('p', undefined, tr('loading')));
         try {
             const [memberBody, res] = await Promise.all([
                 api.get('/family/members', { signal }),
@@ -592,7 +723,7 @@ export async function render(
             ]);
             if (signal.aborted) return;
             if (!res.ok) {
-                const message = await errorMessage(res, 'データを読み込めませんでした');
+                const message = await errorMessage(res, 'errors.load_failed');
                 if (!signal.aborted) showFailure(message);
                 return;
             }
@@ -615,6 +746,7 @@ export async function render(
             };
             csrfToken = typeof body.csrfToken === 'string' ? body.csrfToken : '';
             if (filter !== null && !members.has(filter)) filter = null;
+            loaded = true;
             draw();
         } catch {
             if (!signal.aborted) showFailure();
@@ -624,7 +756,10 @@ export async function render(
     const deleteRecord = async (deleteButton: HTMLButtonElement): Promise<void> => {
         const record = records.find((r) => r.id === deleteButton.dataset['id']);
         if (!record || !canEdit(record)) return;
-        const message = `「${recordLabel(record)}」（${memberName(record.ownerId)}）を削除しますか？この操作は取り消せません。`;
+        const message = tr('list.confirm_delete', {
+            label: recordLabel(record),
+            owner: memberName(record.ownerId),
+        });
         if (!window.confirm(message)) return;
         deleteButton.disabled = true;
         try {
@@ -634,12 +769,12 @@ export async function render(
                 records = records.filter((r) => r.id !== record.id);
                 listError = '';
             } else {
-                listError = await errorMessage(res, '削除できませんでした');
+                listError = await errorMessage(res, 'errors.delete_failed');
                 if (signal.aborted) return;
             }
         } catch {
             if (signal.aborted) return;
-            listError = '削除できませんでした';
+            listError = tr('errors.delete_failed');
         }
         draw();
     };
@@ -647,7 +782,7 @@ export async function render(
     const registerYearlyTotal = async (registerButton: HTMLButtonElement): Promise<void> => {
         const year = parseYear(registerYear.trim());
         if (year === null) {
-            totalsMessage = `年は${MIN_YEAR}〜${MAX_YEAR}で指定してください`;
+            totalsMessage = tr('errors.invalid_year', { min: MIN_YEAR, max: MAX_YEAR });
             draw();
             return;
         }
@@ -655,7 +790,10 @@ export async function render(
         if (
             registered &&
             !window.confirm(
-                `${year}年の配当合計は登録済みです（${formatTotals(registered.totals)}）。現在の合計額で置き換えますか？`,
+                tr('totals.confirm_replace', {
+                    year: fmt.yearName(year),
+                    amount: formatTotals(fmt, registered.totals),
+                }),
             )
         ) {
             return;
@@ -673,17 +811,20 @@ export async function render(
                         ...yearlyTotals.filter((t) => t.year !== saved.year),
                         saved,
                     ].sort((a, b) => a.year - b.year);
-                    totalsMessage = `${year}年の配当合計を登録しました（${formatTotals(saved.totals)}）`;
+                    totalsMessage = tr('totals.registered', {
+                        year: fmt.yearName(year),
+                        amount: formatTotals(fmt, saved.totals),
+                    });
                 } else {
-                    totalsMessage = '登録できませんでした';
+                    totalsMessage = tr('errors.register_failed');
                 }
             } else {
-                totalsMessage = await errorMessage(res, '登録できませんでした');
+                totalsMessage = await errorMessage(res, 'errors.register_failed');
                 if (signal.aborted) return;
             }
         } catch {
             if (signal.aborted) return;
-            totalsMessage = '登録できませんでした';
+            totalsMessage = tr('errors.register_failed');
         }
         draw();
     };
@@ -693,6 +834,15 @@ export async function render(
         const record = records.find((r) => r.id === id);
         if (record && canEdit(record)) openDialog(record);
     };
+
+    // 表示言語が変わったら書き直す（開いているダイアログはそのまま）
+    window.addEventListener(
+        'locale-changed',
+        () => {
+            if (loaded) draw();
+        },
+        { signal },
+    );
 
     container.addEventListener(
         'change',
@@ -737,7 +887,7 @@ export async function render(
             const payload = readForm(form);
             const error = validateInput(payload);
             if (error !== null) {
-                showError(error);
+                showError(tr(`errors.${error.code}`, error.params));
                 return;
             }
             const target = editing;
@@ -749,7 +899,7 @@ export async function render(
                     : await request('POST', ENDPOINT, payload);
                 if (signal.aborted) return;
                 if (!res.ok) {
-                    showError(await errorMessage(res, '保存できませんでした'));
+                    showError(await errorMessage(res, 'errors.save_failed'));
                     return;
                 }
                 const body = (await res.json()) as { data?: unknown };
@@ -764,7 +914,7 @@ export async function render(
                 listError = '';
                 draw();
             } catch {
-                if (!signal.aborted) showError('保存できませんでした');
+                if (!signal.aborted) showError(tr('errors.save_failed'));
             } finally {
                 if (submit) submit.disabled = false;
             }
