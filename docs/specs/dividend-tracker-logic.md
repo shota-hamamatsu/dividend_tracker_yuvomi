@@ -4,6 +4,8 @@ DOM・localStorage・fetch・Node 固有 API に一切依存しない純粋関�
 `enum` / `namespace` / デコレータ / パラメータプロパティは使わない。外部 import なし。
 画面（`src/index.ts`）とサイドカー（`server/`）の両方から import する。
 
+v0.5（銘柄ごとの通貨）の変更は `docs/specs/dividend-tracker-currency.md` に書く。
+
 v0.3 の変更点: 1 つの記録（保有者 × 銘柄）に **受取日を複数** 持たせる。受取日ごとに 1株当たり配当が異なる。
 保有株数は記録に 1 つ（全受取日で共通）。
 

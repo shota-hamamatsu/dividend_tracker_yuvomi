@@ -4,6 +4,8 @@ yuvomi のモジュールのエントリ。TypeScript（strict）。`enum` / `na
 データはサイドカー（`docs/specs/dividend-tracker-sidecar.md` v0.4）に保存し、localStorage は使わない。
 型と計算は `./logic.ts`（`docs/specs/dividend-tracker-logic.md` v0.4）から import する。
 
+v0.8（銘柄ごとの通貨）の変更は `docs/specs/dividend-tracker-currency.md` に書く。
+
 v0.3 の変更点: 1 記録に受取日を複数持てる。記録の一覧を表示し、**追加・編集はダイアログ**で行う（一覧の行クリックで編集、「追加」ボタンで新規）。
 画面下部に置いていた追加フォームは廃止する。
 

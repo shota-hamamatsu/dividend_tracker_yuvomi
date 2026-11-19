@@ -1,5 +1,17 @@
 import { api } from "/api.js";
 // src/logic.ts
+var CURRENCIES = [
+	"JPY",
+	"USD",
+	"EUR",
+	"GBP",
+	"AUD",
+	"CAD",
+	"CHF",
+	"HKD",
+	"CNY",
+	"SGD"
+];
 var MAX_SHARES = 1e7;
 var MAX_PER_SHARE_CENTS = 1e7;
 var MIN_YEAR = 2e3;
@@ -13,18 +25,26 @@ function compareText(a, b) {
 function groupDigits(digits) {
 	return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
+function isCurrency(value) {
+	return typeof value === "string" && CURRENCIES.includes(value);
+}
+/** 1株配当の小数の桁数。 */
+function perShareDecimals(currency) {
+	return currency === "JPY" ? 2 : 4;
+}
 function parseShares(text) {
 	if (!/^[1-9]\d*$/.test(text)) return null;
 	const value = Number(text);
 	return value <= MAX_SHARES ? value : null;
 }
-function parsePerShare(text) {
-	const match = /^(\d+)(?:\.(\d{1,2}))?$/.exec(text);
+function parsePerShare(text, currency) {
+	const decimals = perShareDecimals(currency);
+	const match = new RegExp(`^(\\d+)(?:\\.(\\d{1,${decimals}}))?$`).exec(text);
 	if (!match) return null;
-	const cents = BigInt(match[1] ?? "0") * 100n + BigInt((match[2] ?? "").padEnd(2, "0"));
-	return cents <= BigInt(MAX_PER_SHARE_CENTS) ? Number(cents) : null;
+	const units = BigInt(match[1] ?? "0") * 10n ** BigInt(decimals) + BigInt((match[2] ?? "").padEnd(decimals, "0"));
+	return units <= BigInt(MAX_PER_SHARE_CENTS) ? Number(units) : null;
 }
-/** 受取額（円）。1円未満は切り捨て。 */
+/** 受取額。amount の単位（JPY は 1 円、JPY 以外は 1/100）未満は切り捨て。 */
 function calcAmount(shares, perShareCents) {
 	return Number(BigInt(shares) * BigInt(perShareCents) / 100n);
 }
@@ -43,13 +63,15 @@ function isValidPayDate(text) {
 }
 function validateInput(input) {
 	if (!isPositiveInt(input.ownerId)) return "保有者を選んでください";
+	const { currency } = input;
+	if (!isCurrency(currency)) return "通貨を選んでください";
 	if (input.ticker.trim() === "") return "銘柄コードを入力してください";
 	if (parseShares(input.sharesText) === null) return "保有株数は1以上の整数で入力してください";
 	if (input.payments.length === 0) return "受取日を1つ以上入力してください";
 	if (input.payments.length > 24) return `受取日は24件までです`;
 	for (const payment of input.payments) {
 		if (!isValidPayDate(payment.payDate)) return "受取日を正しく選んでください";
-		if (parsePerShare(payment.perShareText) === null) return "1株当たり配当は0以上、小数第2位までで入力してください";
+		if (parsePerShare(payment.perShareText, currency) === null) return `1株当たり配当は0以上、小数第${perShareDecimals(currency)}位までで入力してください`;
 	}
 	if (new Set(input.payments.map((p) => p.payDate)).size !== input.payments.length) return "同じ受取日が重複しています";
 	return null;
@@ -66,7 +88,10 @@ function isValidPayment(value, shares, isDate) {
 	const { perShareCents } = p;
 	return typeof p["payDate"] === "string" && isDate(p["payDate"]) && isValidPerShareCents(perShareCents) && p["amount"] === calcAmount(shares, perShareCents);
 }
-/** 記録の形を調べる。日付の形式（v0.4 は MM-DD、v0.3 は YYYY-MM-DD）だけ差し替えられる。 */
+/**
+* 記録の形を調べる（通貨は調べない）。
+* 日付の形式（v0.4 以降は MM-DD、v0.3 は YYYY-MM-DD）だけ差し替えられる。
+*/
 function isRecordShape(value, isDate) {
 	if (typeof value !== "object" || value === null) return false;
 	const r = value;
@@ -81,7 +106,7 @@ function isRecordShape(value, isDate) {
 	return typeof r["id"] === "string" && isPositiveInt(r["ownerId"]) && typeof r["ticker"] === "string" && r["ticker"] !== "" && typeof r["name"] === "string" && isPositiveInt(r["createdBy"]) && typeof r["createdAt"] === "string" && typeof r["updatedAt"] === "string";
 }
 function isValidRecord(value) {
-	return isRecordShape(value, isValidPayDate);
+	return isRecordShape(value, isValidPayDate) && isCurrency(value["currency"]);
 }
 function filterByOwner(records, ownerId) {
 	return ownerId === null ? [...records] : records.filter((r) => r.ownerId === ownerId);
@@ -99,30 +124,60 @@ function toBreakdown(byOwner) {
 		owners
 	};
 }
-/** 記録の 1 年分の受取額の合計と、保有者ごとの内訳。 */
+/** 記録の 1 年分の受取額の合計と保有者ごとの内訳を、通貨ごとに（通貨の順、0 の通貨は除く）。 */
 function annualTotals(records) {
-	const byOwner = /* @__PURE__ */ new Map();
-	for (const record of records) byOwner.set(record.ownerId, (byOwner.get(record.ownerId) ?? 0) + recordTotal(record));
-	return toBreakdown(byOwner);
+	const result = [];
+	for (const currency of CURRENCIES) {
+		const byOwner = /* @__PURE__ */ new Map();
+		for (const record of records) {
+			if (record.currency !== currency) continue;
+			byOwner.set(record.ownerId, (byOwner.get(record.ownerId) ?? 0) + recordTotal(record));
+		}
+		const breakdown = toBreakdown(byOwner);
+		if (breakdown.total > 0) result.push({
+			currency,
+			...breakdown
+		});
+	}
+	return result;
 }
 function isValidYear(value) {
 	return typeof value === "number" && Number.isInteger(value) && value >= 2e3 && value <= 2100;
 }
-function isValidYearlyTotal(value) {
-	if (typeof value !== "object" || value === null) return false;
-	const t = value;
-	const { owners } = t;
+/** owners が ownerId の厳密な昇順・各 total が 1 以上で、total がその和なら true。 */
+function isValidBreakdown(owners, total) {
 	if (!Array.isArray(owners)) return false;
 	let sum = 0;
 	let previous = 0;
 	for (const item of owners) {
 		if (typeof item !== "object" || item === null) return false;
-		const { ownerId, total } = item;
-		if (!isPositiveInt(ownerId) || !isPositiveInt(total) || ownerId <= previous) return false;
-		previous = ownerId;
-		sum += total;
+		const o = item;
+		if (!isPositiveInt(o["ownerId"]) || !isPositiveInt(o["total"])) return false;
+		if (o["ownerId"] <= previous) return false;
+		previous = o["ownerId"];
+		sum += o["total"];
 	}
-	return isValidYear(t["year"]) && t["total"] === sum && isPositiveInt(t["registeredBy"]) && typeof t["registeredAt"] === "string";
+	return total === sum;
+}
+function isValidRegistration(t) {
+	return isValidYear(t["year"]) && isPositiveInt(t["registeredBy"]) && typeof t["registeredAt"] === "string";
+}
+function isValidYearlyTotal(value) {
+	if (typeof value !== "object" || value === null) return false;
+	const t = value;
+	const { totals } = t;
+	if (!Array.isArray(totals) || !isValidRegistration(t)) return false;
+	let previous = -1;
+	for (const item of totals) {
+		if (typeof item !== "object" || item === null) return false;
+		const c = item;
+		if (!isCurrency(c["currency"])) return false;
+		const index = CURRENCIES.indexOf(c["currency"]);
+		if (index <= previous) return false;
+		previous = index;
+		if (!isPositiveInt(c["total"]) || !isValidBreakdown(c["owners"], c["total"])) return false;
+	}
+	return true;
 }
 /** 'YYYY' を MIN_YEAR〜MAX_YEAR の整数にする。それ以外は null。 */
 function parseYear(text) {
@@ -130,13 +185,16 @@ function parseYear(text) {
 	const year = Number(text);
 	return isValidYear(year) ? year : null;
 }
-/** 1〜12 月それぞれの受取額の合計（記録の 1 年分）と、保有者ごとの内訳。 */
-function monthlyTotals(records) {
+/** 1〜12 月それぞれの、その通貨の受取額の合計（記録の 1 年分）と、保有者ごとの内訳。 */
+function monthlyTotals(records, currency) {
 	const byOwner = Array.from({ length: 12 }, () => /* @__PURE__ */ new Map());
-	for (const record of records) for (const payment of record.payments) {
-		const owners = byOwner[Number(payment.payDate.substring(0, 2)) - 1];
-		if (!owners) continue;
-		owners.set(record.ownerId, (owners.get(record.ownerId) ?? 0) + payment.amount);
+	for (const record of records) {
+		if (record.currency !== currency) continue;
+		for (const payment of record.payments) {
+			const owners = byOwner[Number(payment.payDate.substring(0, 2)) - 1];
+			if (!owners) continue;
+			owners.set(record.ownerId, (owners.get(record.ownerId) ?? 0) + payment.amount);
+		}
 	}
 	return byOwner.map((owners, i) => ({
 		month: i + 1,
@@ -144,13 +202,13 @@ function monthlyTotals(records) {
 	}));
 }
 /**
-* 年別グラフ用。endYear までの CHART_YEARS 年分を年の昇順で返す。登録の無い年は 0 円。
+* 年別グラフ用。endYear までの CHART_YEARS 年分を年の昇順で返す。登録の無い年・通貨は 0。
 * ownerId が null でなければ、その保有者の分だけにする。
 */
-function yearlyChart(totals, endYear, ownerId) {
+function yearlyChart(totals, endYear, ownerId, currency) {
 	return Array.from({ length: 12 }, (_, i) => {
 		const year = endYear - 12 + 1 + i;
-		const owners = (totals.find((t) => t.year === year)?.owners ?? []).filter((o) => ownerId === null || o.ownerId === ownerId).map((o) => ({ ...o }));
+		const owners = ((totals.find((t) => t.year === year)?.totals.find((c) => c.currency === currency))?.owners ?? []).filter((o) => ownerId === null || o.ownerId === ownerId).map((o) => ({ ...o }));
 		return {
 			year,
 			total: owners.reduce((sum, o) => sum + o.total, 0),
@@ -158,12 +216,36 @@ function yearlyChart(totals, endYear, ownerId) {
 		};
 	});
 }
+/** 記録と年別合計に出てくる通貨（重複なし、通貨の順）。 */
+function usedCurrencies(records, totals) {
+	const used = new Set(records.map((r) => r.currency));
+	for (const t of totals) for (const c of t.totals) used.add(c.currency);
+	return CURRENCIES.filter((c) => used.has(c));
+}
 /** 一覧表示用。ticker → ownerId → id の昇順。 */
 function sortForList(records) {
 	return [...records].sort((a, b) => compareText(a.ticker, b.ticker) || a.ownerId - b.ownerId || compareText(a.id, b.id));
 }
-function formatYen(amount) {
-	return groupDigits(String(amount)) + "円";
+/** 正の整数を、小数 decimals 桁の固定小数として整数部と小数部の文字列に分ける。 */
+function splitFixed(value, decimals) {
+	const digits = String(value).padStart(decimals + 1, "0");
+	return [digits.slice(0, digits.length - decimals), digits.slice(digits.length - decimals)];
+}
+/** 金額の表示（'1,234円'、'USD 1,234.56'）。 */
+function formatAmount(amount, currency) {
+	if (currency === "JPY") return groupDigits(String(amount)) + "円";
+	const [whole, fraction] = splitFixed(amount, 2);
+	return `${currency} ${groupDigits(whole)}.${fraction}`;
+}
+/** 1株配当の整数部と、末尾の 0 を取った小数部（無ければ ''）。 */
+function perShareParts(perShareCents, currency) {
+	const [whole, fraction] = splitFixed(perShareCents, perShareDecimals(currency));
+	return [whole, fraction.replace(/0+$/, "")];
+}
+/** 1株配当を入力欄用の文字列に戻す（3750 JPY → '37.5'、2475 USD → '0.2475'）。 */
+function perShareInputText(perShareCents, currency) {
+	const [whole, fraction] = perShareParts(perShareCents, currency);
+	return fraction === "" ? whole : `${whole}.${fraction}`;
 }
 // src/index.ts
 var ENDPOINT = "/api/extensions/dividend-tracker/records";
@@ -171,6 +253,18 @@ var YEARLY_ENDPOINT = "/api/extensions/dividend-tracker/yearly-totals";
 var EMPTY_TEXT = "まだ記録がありません";
 var UNKNOWN_USER = "（不明なユーザー）";
 var OWNER_COLORS = 8;
+var CURRENCY_NAMES = {
+	JPY: "円（JPY）",
+	USD: "米ドル（USD）",
+	EUR: "ユーロ（EUR）",
+	GBP: "英ポンド（GBP）",
+	AUD: "豪ドル（AUD）",
+	CAD: "カナダドル（CAD）",
+	CHF: "スイスフラン（CHF）",
+	HKD: "香港ドル（HKD）",
+	CNY: "人民元（CNY）",
+	SGD: "シンガポールドル（SGD）"
+};
 function el(tag, className, text) {
 	const node = document.createElement(tag);
 	if (className) node.className = className;
@@ -201,11 +295,16 @@ function button(text, action, className) {
 	node.dataset["action"] = action;
 	return node;
 }
-/** 1/100 円単位の整数を入力欄用の文字列に戻す（3750 → '37.5'、5 → '0.05'、1200 → '12'）。 */
-function perShareText(cents) {
-	const yen = String(Math.trunc(cents / 100));
-	const fraction = String(cents % 100).padStart(2, "0").replace(/0+$/, "");
-	return fraction === "" ? yen : `${yen}.${fraction}`;
+/** 通貨の select（選択肢は通貨の表示名、値は通貨コード）。 */
+function currencySelect(name, choices, selected) {
+	const select = el("select");
+	select.name = name;
+	for (const currency of choices) select.appendChild(option(currency, CURRENCY_NAMES[currency], currency === selected));
+	return select;
+}
+/** 通貨ごとの合計を '1,234円、USD 56.78' のようにつなぐ（空なら '0円'）。 */
+function formatTotals(totals) {
+	return totals.length === 0 ? formatAmount(0, "JPY") : totals.map((t) => formatAmount(t.total, t.currency)).join("、");
 }
 /** 受取日の一覧表示（'3/31、9/30'）。 */
 function formatPayDates(payments) {
@@ -262,6 +361,7 @@ async function render(container, context) {
 	};
 	let csrfToken = "";
 	let filter = null;
+	let chartCurrency = "JPY";
 	let listError = "";
 	let dialog = null;
 	let editing = null;
@@ -296,7 +396,11 @@ async function render(container, context) {
 	};
 	const buildTotals = (visible) => {
 		const section = el("section", "page-section");
-		section.append(el("h2", void 0, "合計額"), el("p", "dt-total", formatYen(annualTotals(visible).total)));
+		const totals = el("div", "dt-totals");
+		const byCurrency = annualTotals(visible);
+		if (byCurrency.length === 0) totals.appendChild(el("p", "dt-total", formatAmount(0, "JPY")));
+		for (const { currency, total } of byCurrency) totals.appendChild(el("p", "dt-total", formatAmount(total, currency)));
+		section.append(el("h2", void 0, "合計額"), totals);
 		if (!me.canWrite) return section;
 		const year = input("number", "registerYear", registerYear);
 		year.min = String(MIN_YEAR);
@@ -360,7 +464,7 @@ async function render(container, context) {
 				}
 				row.appendChild(cell);
 			}
-			row.append(el("td", "dt-owner", memberName(record.ownerId)), el("td", void 0, label), el("td", "dt-num", `${record.shares.toLocaleString("ja-JP")}株`), el("td", void 0, formatPayDates(record.payments)), el("td", "dt-num", formatYen(recordTotal(record))));
+			row.append(el("td", "dt-owner", memberName(record.ownerId)), el("td", void 0, label), el("td", "dt-num", `${record.shares.toLocaleString("ja-JP")}株`), el("td", void 0, formatPayDates(record.payments)), el("td", "dt-num", formatAmount(recordTotal(record), record.currency)));
 			if (canEdit(record)) {
 				row.className = "dt-row--editable";
 				row.dataset["id"] = record.id;
@@ -373,7 +477,8 @@ async function render(container, context) {
 		return section;
 	};
 	/** 保有者ごとの色で積み上げた棒グラフ・ツールチップ・凡例（月別・年別で共通）。 */
-	const buildBars = (bars, chartLabel) => {
+	const buildBars = (bars, chartLabel, currency) => {
+		const money = (amount) => formatAmount(amount, currency);
 		const max = Math.max(...bars.map((b) => b.total));
 		const byColor = (a, b) => colorSlot(a.ownerId) - colorSlot(b.ownerId);
 		const wrap = el("div", "dt-chart-wrap");
@@ -383,8 +488,8 @@ async function render(container, context) {
 		for (const { label, name, key, value, total, owners } of bars) {
 			const sorted = [...owners].sort(byColor);
 			const item = el("li", "dt-chart__month");
-			const breakdown = sorted.map((o) => `${memberName(o.ownerId)} ${formatYen(o.total)}`).join("、");
-			const text = `${name}: ${formatYen(total)}`;
+			const breakdown = sorted.map((o) => `${memberName(o.ownerId)} ${money(o.total)}`).join("、");
+			const text = `${name}: ${money(total)}`;
 			item.setAttribute("aria-label", breakdown === "" ? text : `${text}（${breakdown}）`);
 			const track = el("div", "dt-chart__track");
 			const bar = el("div", "dt-chart__bar");
@@ -392,13 +497,13 @@ async function render(container, context) {
 			for (const o of sorted) {
 				const segment = el("div", `dt-chart__segment ${colorClass(o.ownerId)}`);
 				segment.style.flexGrow = String(o.total);
-				segment.dataset["tooltip"] = `${memberName(o.ownerId)}\n${formatYen(o.total)}`;
+				segment.dataset["tooltip"] = `${memberName(o.ownerId)}\n${money(o.total)}`;
 				segment.dataset[key] = value;
 				bar.appendChild(segment);
 				sumByOwner.set(o.ownerId, (sumByOwner.get(o.ownerId) ?? 0) + o.total);
 			}
 			track.appendChild(bar);
-			item.append(el("span", "dt-chart__value", total > 0 ? formatYen(total) : ""), track, el("span", "dt-chart__label", label));
+			item.append(el("span", "dt-chart__value", total > 0 ? money(total) : ""), track, el("span", "dt-chart__label", label));
 			chart.appendChild(item);
 		}
 		const tooltip = el("div", "dt-tooltip");
@@ -412,34 +517,41 @@ async function render(container, context) {
 		}));
 		for (const { ownerId, total } of owners.sort(byColor)) {
 			const li = el("li");
-			li.append(el("span", `dt-legend__swatch ${colorClass(ownerId)}`), document.createTextNode(`${memberName(ownerId)} ${formatYen(total)}`));
+			li.append(el("span", `dt-legend__swatch ${colorClass(ownerId)}`), document.createTextNode(`${memberName(ownerId)} ${money(total)}`));
 			legend.appendChild(li);
 		}
 		wrap.appendChild(legend);
 		return wrap;
 	};
-	const buildMonthly = (visible) => {
+	const buildMonthly = (visible, choices) => {
 		const section = el("section", "page-section");
-		section.appendChild(el("h2", void 0, "月別配当額"));
+		const title = el("h2", void 0, "月別配当額");
+		if (choices.length >= 2) {
+			const heading = el("div", "dt-heading");
+			const field = labeled("通貨", currencySelect("chartCurrency", choices, chartCurrency));
+			field.className = "dt-filter";
+			heading.append(title, field);
+			section.appendChild(heading);
+		} else section.appendChild(title);
 		if (visible.length === 0) {
 			section.appendChild(el("p", void 0, EMPTY_TEXT));
 			return section;
 		}
-		const bars = monthlyTotals(visible).map((m) => ({
+		const bars = monthlyTotals(visible, chartCurrency).map((m) => ({
 			...m,
 			label: `${m.month}月`,
 			name: `${m.month}月`,
 			key: "month",
 			value: String(m.month)
 		}));
-		section.appendChild(buildBars(bars, "月別配当額"));
+		section.appendChild(buildBars(bars, "月別配当額", chartCurrency));
 		return section;
 	};
 	const buildYearly = () => {
 		const section = el("section", "page-section");
 		section.appendChild(el("h2", void 0, "年別配当額"));
 		const endYear = Math.max((/* @__PURE__ */ new Date()).getFullYear(), ...yearlyTotals.map((t) => t.year));
-		const bars = yearlyChart(yearlyTotals, endYear, filter).map((b) => ({
+		const bars = yearlyChart(yearlyTotals, endYear, filter, chartCurrency).map((b) => ({
 			...b,
 			label: String(b.year),
 			name: `${b.year}年`,
@@ -450,12 +562,15 @@ async function render(container, context) {
 			section.appendChild(el("p", void 0, "まだ登録された年がありません"));
 			return section;
 		}
-		section.appendChild(buildBars(bars, "年別配当額"));
+		section.appendChild(buildBars(bars, "年別配当額", chartCurrency));
 		return section;
 	};
 	const draw = () => {
 		const visible = filterByOwner(records, filter);
-		shell(buildList(visible), buildTotals(visible), buildMonthly(visible), buildYearly());
+		const choices = usedCurrencies(records, yearlyTotals);
+		const first = choices[0];
+		if (first !== void 0 && !choices.includes(chartCurrency)) chartCurrency = first;
+		shell(buildList(visible), buildTotals(visible), buildMonthly(visible, choices), buildYearly());
 	};
 	const paymentRow = (payDate = "", perShare = "") => {
 		const row = el("div", "dt-payment");
@@ -464,7 +579,7 @@ async function render(container, context) {
 		const [month = "", day = ""] = payDate.split("-");
 		const payday = el("div", "dt-payday");
 		payday.append(numberSelect("payMonth", "受取日の月", "月", 12, "月", month), numberSelect("payDay", "受取日の日", "日", 31, "日", day));
-		row.append(labeled("受取日", payday), labeled("1株当たり配当（円）", perShareInput), button("削除", "remove-payment", "dt-button--secondary"));
+		row.append(labeled("受取日", payday), labeled("1株当たり配当", perShareInput), button("削除", "remove-payment", "dt-button--secondary"));
 		return row;
 	};
 	/** 行の数に合わせて「削除」「受取日を追加」の disabled を切り替える。 */
@@ -488,7 +603,7 @@ async function render(container, context) {
 		shares.step = "1";
 		const payments = el("fieldset", "dt-payments");
 		payments.appendChild(el("legend", void 0, "受取日と1株当たり配当"));
-		if (record) for (const p of record.payments) payments.appendChild(paymentRow(p.payDate, perShareText(p.perShareCents)));
+		if (record) for (const p of record.payments) payments.appendChild(paymentRow(p.payDate, perShareInputText(p.perShareCents, record.currency)));
 		else payments.appendChild(paymentRow());
 		payments.appendChild(button("受取日を追加", "add-payment", "dt-button--secondary"));
 		const submit = el("button", void 0, record ? "保存" : "追加");
@@ -499,8 +614,8 @@ async function render(container, context) {
 		const ownerField = labeled("保有者", owner);
 		ownerField.className = "dt-field--wide";
 		const sharesField = labeled("保有株数", shares);
-		sharesField.className = "dt-field--shares";
-		form.append(labeled("銘柄コード", input("text", "ticker", record?.ticker ?? "")), labeled("銘柄名", input("text", "name", record?.name ?? "")), sharesField, ownerField, payments, el("p", "dt-error"), actions);
+		const currencyField = labeled("通貨", currencySelect("currency", CURRENCIES, record?.currency ?? "JPY"));
+		form.append(labeled("銘柄コード", input("text", "ticker", record?.ticker ?? "")), labeled("銘柄名", input("text", "name", record?.name ?? "")), sharesField, currencyField, ownerField, payments, el("p", "dt-error"), actions);
 		refreshPaymentButtons(form);
 		dialog = el("dialog", "dt-dialog");
 		dialog.append(el("h2", void 0, record ? "配当を編集" : "配当を追加"), form);
@@ -527,6 +642,7 @@ async function render(container, context) {
 		});
 		return {
 			ownerId: Number(text("ownerId")),
+			currency: text("currency"),
 			ticker: text("ticker"),
 			name: text("name"),
 			sharesText: text("shares"),
@@ -603,7 +719,7 @@ async function render(container, context) {
 			return;
 		}
 		const registered = yearlyTotals.find((t) => t.year === year);
-		if (registered && !window.confirm(`${year}年の配当合計は登録済みです（${formatYen(registered.total)}）。現在の合計額で置き換えますか？`)) return;
+		if (registered && !window.confirm(`${year}年の配当合計は登録済みです（${formatTotals(registered.totals)}）。現在の合計額で置き換えますか？`)) return;
 		registerButton.disabled = true;
 		try {
 			const res = await request("PUT", `${YEARLY_ENDPOINT}/${year}`);
@@ -614,7 +730,7 @@ async function render(container, context) {
 				const saved = body.data;
 				if (isValidYearlyTotal(saved)) {
 					yearlyTotals = [...yearlyTotals.filter((t) => t.year !== saved.year), saved].sort((a, b) => a.year - b.year);
-					totalsMessage = `${year}年の配当合計を登録しました（${formatYen(saved.total)}）`;
+					totalsMessage = `${year}年の配当合計を登録しました（${formatTotals(saved.totals)}）`;
 				} else totalsMessage = "登録できませんでした";
 			} else {
 				totalsMessage = await errorMessage(res, "登録できませんでした");
@@ -634,6 +750,12 @@ async function render(container, context) {
 	container.addEventListener("change", (e) => {
 		const target = e.target;
 		if (!(target instanceof HTMLSelectElement)) return;
+		if (target.name === "chartCurrency") {
+			const choice = CURRENCIES.find((c) => c === target.value);
+			if (choice) chartCurrency = choice;
+			draw();
+			return;
+		}
 		if (target.name !== "filter") return;
 		filter = target.value === "" ? null : Number(target.value);
 		listError = "";

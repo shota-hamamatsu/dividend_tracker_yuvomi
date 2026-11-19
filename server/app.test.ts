@@ -28,6 +28,7 @@ function existing(id: string, ownerId: number): DividendRecord {
     return {
         id,
         ownerId,
+        currency: 'JPY',
         ticker: '7203',
         name: 'トヨタ',
         shares: 100,
@@ -262,6 +263,51 @@ test('PUT edits a record, keeping id and creation info', async () => {
     assert.equal(((await byAdmin.json()) as { data: DividendRecord }).data.ownerId, 3);
 });
 
+test('POST / PUT store the currency and compute amounts in its unit', async () => {
+    reset();
+    // 省略時は JPY（v0.4 の画面からの送信）
+    const omitted = await write('POST', '/records', 'alice', input);
+    assert.equal(omitted.status, 201);
+    assert.equal(((await omitted.json()) as { data: DividendRecord }).data.currency, 'JPY');
+
+    const usd = {
+        ...input,
+        currency: 'USD',
+        sharesText: '3',
+        payments: [{ payDate: '02-13', perShareText: '0.2475' }],
+    };
+    const res = await write('POST', '/records', 'alice', usd);
+    assert.equal(res.status, 201);
+    const { data } = (await res.json()) as { data: DividendRecord };
+    assert.equal(data.currency, 'USD');
+    // USD 0.2475 × 3 = USD 0.7425 → 74 セント
+    assert.deepEqual(data.payments, [{ payDate: '02-13', perShareCents: 2475, amount: 74 }]);
+    assert.deepEqual(store.get(data.id), data);
+
+    const notString = await write('POST', '/records', 'alice', { ...usd, currency: 1 });
+    assert.equal(notString.status, 400);
+    assert.equal(((await notString.json()) as { code: string }).code, 'bad_request');
+    const unknown = await write('POST', '/records', 'alice', { ...usd, currency: 'XYZ' });
+    assert.equal(unknown.status, 400);
+    assert.equal(((await unknown.json()) as { error: string }).error, '通貨を選んでください');
+    // JPY では小数第3位以下を受け付けない
+    const tooPrecise = await write('POST', '/records', 'alice', { ...usd, currency: 'JPY' });
+    assert.equal(tooPrecise.status, 400);
+
+    // 通貨を変えると、新しい通貨の単位で計算し直す
+    const edit = {
+        ...input,
+        currency: 'EUR',
+        sharesText: '100',
+        payments: [{ payDate: '03-31', perShareText: '0.45' }],
+    };
+    const changed = await write('PUT', '/records/r-alice', 'alice', edit);
+    assert.equal(changed.status, 200);
+    const updated = ((await changed.json()) as { data: DividendRecord }).data;
+    assert.equal(updated.currency, 'EUR');
+    assert.deepEqual(updated.payments, [{ payDate: '03-31', perShareCents: 4500, amount: 4500 }]);
+});
+
 test('DELETE enforces ownership unless admin', async () => {
     reset();
     assert.equal((await write('DELETE', '/records/r-admin', 'alice')).status, 403);
@@ -309,10 +355,15 @@ test('PUT /yearly-totals/<year> registers the total computed from stored records
     assert.equal(res.status, 200);
     const { data } = (await res.json()) as { data: YearlyTotal };
     assert.equal(data.year, 2026);
-    assert.equal(data.total, 9000);
-    assert.deepEqual(data.owners, [
-        { ownerId: 1, total: 4500 },
-        { ownerId: 2, total: 4500 },
+    assert.deepEqual(data.totals, [
+        {
+            currency: 'JPY',
+            total: 9000,
+            owners: [
+                { ownerId: 1, total: 4500 },
+                { ownerId: 2, total: 4500 },
+            ],
+        },
     ]);
     assert.equal(data.registeredBy, 2);
     assert.deepEqual(store.listYearlyTotals(), [data]);
@@ -321,14 +372,29 @@ test('PUT /yearly-totals/<year> registers the total computed from stored records
     await store.remove('r-admin');
     const again = await write('PUT', '/yearly-totals/2026', 'admin');
     const replaced = ((await again.json()) as { data: YearlyTotal }).data;
-    assert.equal(replaced.total, 4500);
+    assert.deepEqual(
+        replaced.totals.map((t) => [t.currency, t.total]),
+        [['JPY', 4500]],
+    );
     assert.equal(replaced.registeredBy, 1);
+    // 通貨ごとに分けて登録する
+    await store.add({
+        ...existing('r-usd', 2),
+        currency: 'USD',
+        payments: [{ payDate: '02-13', perShareCents: 2600, amount: 2600 }],
+    });
     await write('PUT', '/yearly-totals/2020', 'admin');
     assert.deepEqual(
-        store.listYearlyTotals().map((t) => [t.year, t.total]),
+        store.listYearlyTotals().map((t) => [t.year, t.totals.map((c) => [c.currency, c.total])]),
         [
-            [2020, 4500],
-            [2026, 4500],
+            [
+                2020,
+                [
+                    ['JPY', 4500],
+                    ['USD', 2600],
+                ],
+            ],
+            [2026, [['JPY', 4500]]],
         ],
     );
     const list = await fetch(`${base}/records`, { headers: { cookie: 'session=reader' } });

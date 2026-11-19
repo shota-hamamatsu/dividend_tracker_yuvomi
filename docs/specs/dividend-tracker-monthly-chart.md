@@ -3,6 +3,8 @@
 合計額の下に月ごとの配当額（受取額の合計）を、その下に登録した年ごとの配当合計を、それぞれ棒グラフで表示する。
 前提: `docs/specs/dividend-tracker-logic.md` v0.4、`docs/specs/dividend-tracker-ui.md` v0.7。
 
+v0.4（通貨の切り替え）の変更は `docs/specs/dividend-tracker-currency.md` に書く。
+
 v0.3 の変更点:
 - 受取日が月日だけになったので、月別配当額は年を選ばない（記録の 1 年分を月ごとに出す）。年の選択 `select[name=chartYear]` と状態 `chartYear` を廃止する。
 - 月別配当額の下に **年別配当額** のグラフを追加する（下の「年別配当額」）。棒の作り・保有者の色・ツールチップ・凡例は月別と同じ。

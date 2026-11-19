@@ -54,8 +54,15 @@
 }
 
 /* 合計額と年別合計の登録 */
+/* 通貨ごとの合計額を縦に並べる */
+.dt-totals {
+  display: grid;
+  gap: var(--space-1, 0.25rem);
+  margin-top: var(--space-2, 0.5rem);
+}
+
 .dt-total {
-  margin: var(--space-2, 0.5rem) 0 0;
+  margin: 0;
   font-size: var(--text-2xl, 1.5rem);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
@@ -459,10 +466,6 @@
 
 .dt-dialog .dt-field--wide {
   grid-column: 1 / -1;
-}
-
-.dt-dialog .dt-field--shares {
-  grid-column: 1;
 }
 
 /* 銘柄一覧の削除ボタン */

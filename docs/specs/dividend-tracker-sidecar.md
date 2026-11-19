@@ -1,5 +1,7 @@
 # 仕様: 配当管理サイドカー（server/）v0.4
 
+v0.5（銘柄ごとの通貨、保存ファイル version 4）の変更は `docs/specs/dividend-tracker-currency.md` に書く。
+
 v0.4 の変更点: 受取日を月日（`MM-DD`）にする（`docs/specs/dividend-tracker-logic.md` v0.4）。年ごとの配当合計の登録（`PUT /yearly-totals/<year>`）を追加。保存ファイルを version 3 にし、version 1・2 を読み込み時に移行する。
 
 v0.3 の変更点: 記録が受取日を複数持つ（`docs/specs/dividend-tracker-logic.md` v0.3）。記録の編集（PUT）を追加。保存ファイルを version 2 にし、version 1 を読み込み時に移行する。

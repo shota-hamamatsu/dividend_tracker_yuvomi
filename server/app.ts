@@ -4,6 +4,7 @@ import {
     type DividendRecord,
     type PaymentInput,
     type RecordInput,
+    type Currency,
     MAX_PAYMENTS,
     buildPayments,
     buildYearlyTotal,
@@ -108,15 +109,18 @@ function toPayments(value: unknown): PaymentInput[] {
 function toInput(body: unknown): RecordInput {
     const b = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>;
     const { ownerId, ticker, name, sharesText } = b;
+    // 省略時は JPY（v0.4 の画面からの送信も受け付ける）
+    const currency = b['currency'] ?? 'JPY';
     if (
         typeof ownerId !== 'number' ||
+        typeof currency !== 'string' ||
         typeof ticker !== 'string' ||
         typeof name !== 'string' ||
         typeof sharesText !== 'string'
     ) {
         throw new HttpError(400, 'bad_request', BAD_REQUEST);
     }
-    return { ownerId, ticker, name, sharesText, payments: toPayments(b['payments']) };
+    return { ownerId, currency, ticker, name, sharesText, payments: toPayments(b['payments']) };
 }
 
 export function createHandler(deps: Deps) {
@@ -199,12 +203,14 @@ export function createHandler(deps: Deps) {
     /** 入力から保存用の項目を作る。validateInput を通っているので parse は null にならない。 */
     const fields = (input: RecordInput) => {
         const shares = parseShares(input.sharesText) as number;
+        const currency = input.currency as Currency;
         return {
             ownerId: input.ownerId,
+            currency,
             ticker: input.ticker.trim(),
             name: input.name.trim(),
             shares,
-            payments: buildPayments(shares, input.payments),
+            payments: buildPayments(shares, input.payments, currency),
         };
     };
 

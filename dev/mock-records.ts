@@ -4,7 +4,10 @@ import {
     parseShares,
     parseYear,
     validateInput,
+    type Currency,
+    type CurrencyBreakdown,
     type DividendRecord,
+    type OwnerTotal,
     type RecordInput,
     type YearlyTotal,
 } from '../src/logic.ts';
@@ -24,15 +27,18 @@ const rec = (
     name: string,
     shares: number,
     payments: [payDate: string, perShareText: string][],
+    currency: Currency = 'JPY',
 ): DividendRecord => ({
     id,
     ownerId,
+    currency,
     ticker,
     name,
     shares,
     payments: buildPayments(
         shares,
         payments.map(([payDate, perShareText]) => ({ payDate, perShareText })),
+        currency,
     ),
     createdBy: ownerId,
     createdAt: '2024-01-01T00:00:00.000Z',
@@ -53,21 +59,46 @@ const seed = (): DividendRecord[] => [
         ['09-30', '60'],
     ]),
     rec('4', 2, '8306', '三菱UFJ', 300, [['06-27', '32.5']]),
+    rec(
+        '5',
+        1,
+        'AAPL',
+        'Apple',
+        50,
+        [
+            ['02-13', '0.26'],
+            ['05-15', '0.26'],
+            ['08-14', '0.26'],
+            ['11-13', '0.26'],
+        ],
+        'USD',
+    ),
 ];
 
-/** 過去の年の登録済み合計（今年の 1〜5 年前）。保有者 3 は 3 年前から。 */
+const breakdown = (currency: Currency, owners: OwnerTotal[]): CurrencyBreakdown => ({
+    currency,
+    total: owners.reduce((sum, o) => sum + o.total, 0),
+    owners,
+});
+
+/**
+ * 過去の年の登録済み合計（今年の 1〜5 年前）。保有者 3 は 3 年前から。
+ * USD（1/100 ドル単位）は保有者 1 の 2 年前・1 年前だけ。
+ */
+const USD_BY_AGO: Record<number, number> = { 2: 4800, 1: 5200 };
+
 const seedYearlyTotals = (): YearlyTotal[] => {
     const thisYear = new Date().getFullYear();
     return [5, 4, 3, 2, 1].map((ago) => {
-        const owners = [
+        const yen = breakdown('JPY', [
             { ownerId: 1, total: 9000 - ago * 200 },
             { ownerId: 2, total: 12000 - ago * 500 },
             ...(ago <= 3 ? [{ ownerId: 3, total: 20000 - ago * 1500 }] : []),
-        ];
+        ]);
+        const usd = USD_BY_AGO[ago];
         return {
             year: thisYear - ago,
-            total: owners.reduce((sum, o) => sum + o.total, 0),
-            owners,
+            totals: usd ? [yen, breakdown('USD', [{ ownerId: 1, total: usd }])] : [yen],
             registeredBy: 1,
             registeredAt: `${thisYear - ago}-12-31T00:00:00.000Z`,
         };
@@ -149,19 +180,23 @@ export function installMockFetch(scenario: Scenario): void {
             return json(200, { data: { id, deleted: true } });
         }
 
-        const body = JSON.parse(String(init?.body ?? '{}')) as RecordInput;
+        const parsed = JSON.parse(String(init?.body ?? '{}')) as Partial<RecordInput>;
+        // 省略時は JPY（サイドカーと同じ）
+        const body = { ...parsed, currency: parsed.currency ?? 'JPY' } as RecordInput;
         const error = validateInput(body);
         if (error !== null) return json(400, { error });
         if (!me.isAdmin && body.ownerId !== me.id) {
             return json(403, { error: '自分の記録だけ追加・編集できます' });
         }
         const shares = parseShares(body.sharesText) as number;
+        const currency = body.currency as Currency;
         const fields = {
             ownerId: body.ownerId,
+            currency,
             ticker: body.ticker.trim(),
             name: body.name.trim(),
             shares,
-            payments: buildPayments(shares, body.payments),
+            payments: buildPayments(shares, body.payments, currency),
         };
         const now = new Date().toISOString();
 

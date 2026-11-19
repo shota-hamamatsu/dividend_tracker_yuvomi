@@ -7,6 +7,8 @@ import {
     isValidYearlyTotal,
     migrateLegacyRecord,
     migrateV3Record,
+    migrateV4Record,
+    migrateV4YearlyTotal,
 } from '../src/logic.ts';
 
 export interface Store {
@@ -27,7 +29,7 @@ interface Data {
     yearlyTotals: YearlyTotal[];
 }
 
-const FILE_VERSION = 3;
+const FILE_VERSION = 4;
 
 function withYearlyTotal(totals: YearlyTotal[], total: YearlyTotal): YearlyTotal[] {
     return [...totals.filter((t) => t.year !== total.year), total].sort((a, b) => a.year - b.year);
@@ -37,7 +39,23 @@ function validOnly<T>(list: unknown[], convert: (value: unknown) => T | null): T
     return list.map(convert).filter((r): r is T => r !== null);
 }
 
-/** 保存ファイルの中身を取り出す。version 1（v0.2 形式）・2（v0.3 形式）は移行する。 */
+/** 年別合計を変換し、同じ年が複数あれば後のものを残す。 */
+function loadYearlyTotals(
+    value: unknown,
+    convert: (v: unknown) => YearlyTotal | null,
+): YearlyTotal[] {
+    let totals: YearlyTotal[] = [];
+    if (!Array.isArray(value)) return totals;
+    for (const t of validOnly(value as unknown[], convert)) {
+        totals = withYearlyTotal(totals, t);
+    }
+    return totals;
+}
+
+/**
+ * 保存ファイルの中身を取り出す。
+ * version 1（v0.2 形式）・2（v0.3 形式）・3（v0.4 形式）は移行する。
+ */
 function loadData(parsed: unknown): Data {
     const { version, records, yearlyTotals } = (parsed ?? {}) as {
         version?: unknown;
@@ -46,14 +64,16 @@ function loadData(parsed: unknown): Data {
     };
     const list = Array.isArray(records) ? (records as unknown[]) : [];
     if (version === FILE_VERSION) {
-        let totals: YearlyTotal[] = [];
-        if (Array.isArray(yearlyTotals)) {
-            // 同じ年が複数あれば後のもの
-            for (const t of (yearlyTotals as unknown[]).filter(isValidYearlyTotal)) {
-                totals = withYearlyTotal(totals, t);
-            }
-        }
-        return { records: list.filter(isValidRecord), yearlyTotals: totals };
+        return {
+            records: list.filter(isValidRecord),
+            yearlyTotals: loadYearlyTotals(yearlyTotals, (t) => (isValidYearlyTotal(t) ? t : null)),
+        };
+    }
+    if (version === 3) {
+        return {
+            records: validOnly(list, migrateV4Record),
+            yearlyTotals: loadYearlyTotals(yearlyTotals, migrateV4YearlyTotal),
+        };
     }
     if (version === 2) return { records: validOnly(list, migrateV3Record), yearlyTotals: [] };
     if (version === 1) return { records: validOnly(list, migrateLegacyRecord), yearlyTotals: [] };
