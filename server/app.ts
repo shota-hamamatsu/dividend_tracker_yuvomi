@@ -30,7 +30,7 @@ export interface Deps {
     publicOrigin: string;
 }
 
-/** 画面はコードで翻訳する。message（英語）は curl やログで読むためのもの。 */
+/** The UI translates by code. The English message is for curl and logs. */
 class HttpError extends Error {
     readonly status: number;
     readonly code: string;
@@ -43,7 +43,7 @@ class HttpError extends Error {
     }
 }
 
-/** 入力エラーの英語の文（locales/en.json の errors.<code> と同じ）。 */
+/** English text for input errors (same as errors.<code> in locales/en.json). */
 const INPUT_ERROR_MESSAGES: Record<InputErrorCode, (p: Record<string, number>) => string> = {
     owner_required: () => 'Choose a holder.',
     currency_required: () => 'Choose a currency.',
@@ -119,7 +119,7 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
 
 function toPayments(value: unknown): PaymentInput[] {
     if (!Array.isArray(value)) throw BAD_REQUEST();
-    // 件数超過は要素を調べる前に validateInput のメッセージで返す
+    // Too many payments: let validateInput report it before checking each item
     if (value.length > MAX_PAYMENTS) return value as PaymentInput[];
     return value.map((item: unknown) => {
         const p = (typeof item === 'object' && item !== null ? item : {}) as Record<
@@ -137,7 +137,7 @@ function toPayments(value: unknown): PaymentInput[] {
 function toInput(body: unknown): RecordInput {
     const b = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>;
     const { ownerId, ticker, name, sharesText } = b;
-    // 省略時は JPY（v0.4 の画面からの送信も受け付ける）
+    // JPY when omitted (also accepts requests from the v0.4 UI)
     const currency = b['currency'] ?? 'JPY';
     if (
         typeof ownerId !== 'number' ||
@@ -207,7 +207,7 @@ export function createHandler(deps: Deps) {
         );
     };
 
-    /** 本文を読み、検証と家族チェックを済ませた入力を返す（POST / PUT 共通）。 */
+    /** Reads the body and returns validated input checked against the family (POST and PUT). */
     const readValidInput = async (req: IncomingMessage, cookie: string): Promise<RecordInput> => {
         const input = toInput(await readJson(req));
         const error = validateInput(input);
@@ -236,7 +236,7 @@ export function createHandler(deps: Deps) {
         return input;
     };
 
-    /** 入力から保存用の項目を作る。validateInput を通っているので parse は null にならない。 */
+    /** Builds the stored fields from input. It passed validateInput, so parsing never returns null. */
     const fields = (input: RecordInput) => {
         const shares = parseShares(input.sharesText) as number;
         const currency = input.currency as Currency;
@@ -314,7 +314,7 @@ export function createHandler(deps: Deps) {
         } catch {
             throw SAVE_FAILED();
         }
-        // 本文を読んでいる間に削除された場合
+        // Deleted while the body was being read
         if (!updated) throw RECORD_NOT_FOUND();
         send(res, 200, { data: record });
     };
@@ -343,7 +343,7 @@ export function createHandler(deps: Deps) {
         send(res, 200, { data: { id, deleted: true } });
     };
 
-    /** その年の配当合計を、保存されている全員分の記録から計算して登録する（本文は読まない）。 */
+    /** Registers the year's total computed from everyone's stored records (the body is not read). */
     const registerYearlyTotal = async (
         req: IncomingMessage,
         res: ServerResponse,

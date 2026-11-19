@@ -3,7 +3,7 @@
     "version": "0.6.0",
     "private": true,
     "type": "module",
-    "description": "yuvomi.cloud 向け配当管理モジュール（TypeScript ソース → modules/dividend-tracker/index.js にビルド）とサイドカー（server/）",
+    "description": "Dividend tracker module for yuvomi.cloud (TypeScript built to modules/dividend-tracker/index.js) and its sidecar (server/)",
     "scripts": {
         "dev": "vite --config vite.dev.config.ts",
         "build": "vite build",

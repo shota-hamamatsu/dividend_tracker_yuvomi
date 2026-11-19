@@ -15,12 +15,12 @@ export interface Store {
     list(): DividendRecord[];
     get(id: string): DividendRecord | undefined;
     add(record: DividendRecord): Promise<void>;
-    /** 同じ id の記録を置き換える。無ければ false。 */
+    /** Replaces the record with the same id. False when there is none. */
     update(record: DividendRecord): Promise<boolean>;
     remove(id: string): Promise<boolean>;
-    /** 登録済みの年別合計（年の昇順）。 */
+    /** Registered yearly totals (ascending by year). */
     listYearlyTotals(): YearlyTotal[];
-    /** 同じ年を置き換える。無ければ追加する。 */
+    /** Replaces the same year, or adds it. */
     putYearlyTotal(total: YearlyTotal): Promise<void>;
 }
 
@@ -39,7 +39,7 @@ function validOnly<T>(list: unknown[], convert: (value: unknown) => T | null): T
     return list.map(convert).filter((r): r is T => r !== null);
 }
 
-/** 年別合計を変換し、同じ年が複数あれば後のものを残す。 */
+/** Converts yearly totals, keeping the last one when a year appears more than once. */
 function loadYearlyTotals(
     value: unknown,
     convert: (v: unknown) => YearlyTotal | null,
@@ -53,8 +53,8 @@ function loadYearlyTotals(
 }
 
 /**
- * 保存ファイルの中身を取り出す。
- * version 1（v0.2 形式）・2（v0.3 形式）・3（v0.4 形式）は移行する。
+ * Reads the stored file.
+ * Versions 1 (v0.2), 2 (v0.3) and 3 (v0.4) are migrated.
  */
 function loadData(parsed: unknown): Data {
     const { version, records, yearlyTotals } = (parsed ?? {}) as {
@@ -77,10 +77,10 @@ function loadData(parsed: unknown): Data {
     }
     if (version === 2) return { records: validOnly(list, migrateV3Record), yearlyTotals: [] };
     if (version === 1) return { records: validOnly(list, migrateLegacyRecord), yearlyTotals: [] };
-    throw new Error(`records.json の version ${String(version)} には対応していません`);
+    throw new Error(`records.json version ${String(version)} is not supported`);
 }
 
-/** メモリ上の値を正とし、変更のたびに JSON ファイルへ書き出す。 */
+/** The in-memory data is the source of truth; every change is written to the JSON file. */
 export async function openFileStore(dataDir: string): Promise<Store> {
     const file = join(dataDir, 'records.json');
     await mkdir(dataDir, { recursive: true });
@@ -92,7 +92,7 @@ export async function openFileStore(dataDir: string): Promise<Store> {
         if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     }
 
-    // 書き込みを直列化する（前の書き込みの成否に関わらず次へ進む）
+    // Serialize writes (the next one runs whether or not the previous one succeeded)
     let queue: Promise<void> = Promise.resolve();
     const persist = (snapshot: Data): Promise<void> => {
         const run = queue.then(async () => {
@@ -104,7 +104,7 @@ export async function openFileStore(dataDir: string): Promise<Store> {
         return run;
     };
 
-    /** 変更を反映して書き出す。失敗したら元に戻す。 */
+    /** Applies and writes a change, rolling back on failure. */
     const commit = async (next: Data): Promise<void> => {
         const before = data;
         data = next;
@@ -142,7 +142,7 @@ export async function openFileStore(dataDir: string): Promise<Store> {
     };
 }
 
-/** テスト用。ファイルに書かない。 */
+/** For tests. Never writes a file. */
 export function memoryStore(
     initial: DividendRecord[] = [],
     initialTotals: YearlyTotal[] = [],

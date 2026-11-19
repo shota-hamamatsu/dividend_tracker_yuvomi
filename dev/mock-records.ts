@@ -47,7 +47,7 @@ const rec = (
 });
 
 const seed = (): DividendRecord[] => [
-    rec('1', 1, '7203', 'トヨタ自動車', 100, [
+    rec('1', 1, '7203', 'Toyota Motor', 100, [
         ['06-02', '50'],
         ['11-26', '45'],
     ]),
@@ -55,11 +55,11 @@ const seed = (): DividendRecord[] => [
         ['06-23', '2.65'],
         ['12-09', '2.6'],
     ]),
-    rec('3', 3, '8058', '三菱商事', 200, [
+    rec('3', 3, '8058', 'Mitsubishi Corp.', 200, [
         ['03-31', '56'],
         ['09-30', '60'],
     ]),
-    rec('4', 2, '8306', '三菱UFJ', 300, [['06-27', '32.5']]),
+    rec('4', 2, '8306', 'MUFG', 300, [['06-27', '32.5']]),
     rec(
         '5',
         1,
@@ -83,8 +83,8 @@ const breakdown = (currency: Currency, owners: OwnerTotal[]): CurrencyBreakdown 
 });
 
 /**
- * 過去の年の登録済み合計（今年の 1〜5 年前）。保有者 3 は 3 年前から。
- * USD（1/100 ドル単位）は保有者 1 の 2 年前・1 年前だけ。
+ * Registered totals for past years (1 to 5 years ago). Holder 3 starts 3 years ago.
+ * USD (in cents) only for holder 1, 2 years and 1 year ago.
  */
 const USD_BY_AGO: Record<number, number> = { 2: 4800, 1: 5200 };
 
@@ -195,10 +195,10 @@ export function installMockFetch(scenario: Scenario): void {
         }
 
         const parsed = JSON.parse(String(init?.body ?? '{}')) as Partial<RecordInput>;
-        // 省略時は JPY（サイドカーと同じ）
+        // JPY when omitted (same as the sidecar)
         const body = { ...parsed, currency: parsed.currency ?? 'JPY' } as RecordInput;
         const error = validateInput(body);
-        // 英語の文はサイドカーと違い省略する（画面は code で翻訳する）
+        // Unlike the sidecar, the English text is just the code (the UI translates by code)
         if (error !== null) return json(400, { error: error.code, ...error });
         if (!me.isAdmin && body.ownerId !== me.id) {
             return json(403, {

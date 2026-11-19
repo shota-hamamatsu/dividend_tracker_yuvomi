@@ -13,7 +13,7 @@ Desktop.ini
 .env.*
 !.env.example
 
-# Dependencies / build (必要に応じて追加)
+# Dependencies / build (add as needed)
 node_modules/
 dist/
 build/

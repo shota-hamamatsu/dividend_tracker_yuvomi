@@ -42,10 +42,10 @@ jobs:
                       <head>
                           <meta charset="utf-8" />
                           <meta http-equiv="refresh" content="0; url=dev/" />
-                          <title>配当管理 - 画面確認</title>
+                          <title>Dividend Tracker - Preview</title>
                       </head>
                       <body>
-                          <a href="dev/">画面確認ページへ</a>
+                          <a href="dev/">Open the preview page</a>
                       </body>
                   </html>
                   HTML

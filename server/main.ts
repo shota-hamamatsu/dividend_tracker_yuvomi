@@ -9,7 +9,7 @@ const publicOrigin = (process.env['PUBLIC_ORIGIN'] ?? '').replace(/\/+$/, '');
 const dataDir = process.env['DATA_DIR'] ?? '/data';
 
 if (!/^https?:\/\/[^/]+$/.test(publicOrigin)) {
-    console.error('PUBLIC_ORIGIN を設定してください（例: https://yuvomi.example.com）');
+    console.error('Set PUBLIC_ORIGIN (for example https://yuvomi.example.com)');
     process.exit(1);
 }
 

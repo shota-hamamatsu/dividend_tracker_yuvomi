@@ -1,7 +1,7 @@
-# yuvomi + 配当管理サイドカー + Caddy（リバースプロキシ）の構成例。
-# yuvomi 公式の docker-compose.yml に dividend-tracker と caddy を足したもの。
-# ブラウザは Caddy にだけ接続し、/api/extensions/dividend-tracker/* がサイドカーへ、
-# それ以外が yuvomi へ転送される（同一オリジンにするため）。
+# Example setup: yuvomi + the dividend tracker sidecar + Caddy (reverse proxy).
+# This is yuvomi's official docker-compose.yml with dividend-tracker and caddy added.
+# Browsers connect only to Caddy. /api/extensions/dividend-tracker/* goes to the sidecar
+# and everything else to yuvomi (so both share one origin).
 services:
     yuvomi:
         image: ghcr.io/ulsklyc/yuvomi:latest
@@ -13,19 +13,19 @@ services:
             - MODULES_DIR=/app/modules
         volumes:
             - ./data:/data
-            - ./modules:/app/modules # modules/dividend-tracker/ をここへ置く
-        # ports は公開しない（Caddy 経由でのみ到達させる）
+            - ./modules:/app/modules # put modules/dividend-tracker/ here
+        # no published ports (reachable only through Caddy)
 
     dividend-tracker:
         build:
-            context: ./dividend_tracker_yuvomi # このリポジトリを clone した場所
+            context: ./dividend_tracker_yuvomi # where this repository is cloned
             dockerfile: server/Dockerfile
         restart: unless-stopped
         environment:
-            - PUBLIC_ORIGIN=https://yuvomi.example.com # ブラウザで開く URL（末尾の / なし）
+            - PUBLIC_ORIGIN=https://yuvomi.example.com # the URL opened in the browser (no trailing /)
             - YUVOMI_INTERNAL_URL=http://yuvomi:3000
         volumes:
-            - ./dividend-data:/data # 配当データ（records.json）。バックアップ対象
+            - ./dividend-data:/data # dividend data (records.json); back this up
 
     caddy:
         image: caddy:2

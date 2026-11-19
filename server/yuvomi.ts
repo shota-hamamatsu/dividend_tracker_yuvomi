@@ -8,7 +8,7 @@ export interface Me {
     access: Access;
 }
 
-/** 短期キャッシュ。件数上限を超えたら古いものから捨てる。 */
+/** A short-lived cache. Drops the oldest entries past the size limit. */
 class TtlCache<T> {
     private readonly entries = new Map<string, { value: T; expires: number }>();
     private readonly ttlMs: number;
@@ -75,7 +75,7 @@ export function parseMemberIds(body: unknown): Set<number> | null {
     return ids;
 }
 
-/** yuvomi の /api/v1 を呼び出し者の Cookie で問い合わせる。 */
+/** Calls yuvomi's /api/v1 with the caller's cookie. */
 export function yuvomiClient(internalUrl: string) {
     const base = internalUrl.replace(/\/+$/, '');
     const meCache = new TtlCache<Me>(5000, 500);

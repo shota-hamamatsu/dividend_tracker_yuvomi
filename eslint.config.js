@@ -5,11 +5,11 @@ import eslintConfigPrettier from 'eslint-config-prettier';
 
 export default tseslint.config(
     {
-        // 生成物（ビルド出力）は lint 対象外
+        // Build output is not linted
         ignores: ['modules/**', 'dist/**', 'node_modules/**'],
     },
     js.configs.recommended,
     ...tseslint.configs.recommended,
-    // 整形は Prettier に任せるため、ESLint 側の整形系ルールを無効化する
+    // Prettier handles formatting, so ESLint's formatting rules are turned off
     eslintConfigPrettier,
 );

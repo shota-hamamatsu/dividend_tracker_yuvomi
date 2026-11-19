@@ -1,4 +1,4 @@
-// yuvomi が提供する /api.js（ビルド時は external）。使う部分だけ型を書く。
+// /api.js provided by yuvomi (external at build time). Only the parts we use are typed.
 export declare const api: {
     get(path: string, opts?: { signal?: AbortSignal }): Promise<unknown>;
 };

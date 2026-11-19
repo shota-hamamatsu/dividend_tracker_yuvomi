@@ -1,9 +1,9 @@
-# 配当管理サイドカー。リポジトリのルートをビルドコンテキストにする:
+# Dividend tracker sidecar. Build with the repository root as the context:
 #   docker build -f server/Dockerfile -t dividend-tracker-sidecar .
 FROM node:22-alpine
 
 WORKDIR /app
-# npm 依存は無い。ロジックは画面と共通の src/logic.ts を使う。
+# No npm dependencies. The logic is src/logic.ts, shared with the UI.
 COPY package.json ./
 COPY src/logic.ts ./src/logic.ts
 COPY server/app.ts server/main.ts server/store.ts server/yuvomi.ts ./server/

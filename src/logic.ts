@@ -13,21 +13,21 @@ export const CURRENCIES = [
 export type Currency = (typeof CURRENCIES)[number];
 
 export interface Payment {
-    payDate: string; // MM-DD（毎年この月日に受け取る）
-    // 1株当たり配当。amount の単位の 1/100 の整数（JPY は 1/100 円、JPY 以外は 1/10000）
+    payDate: string; // MM-DD (received on this month and day every year)
+    // Dividend per share, as an integer in 1/100 of the amount unit (JPY: 1/100 yen, others: 1/10000)
     perShareCents: number;
-    // 受取額 = calcAmount(record.shares, perShareCents)。JPY は円、JPY 以外は 1/100（セント等）
+    // Amount received = calcAmount(record.shares, perShareCents). JPY: yen, others: 1/100 (cents etc.)
     amount: number;
 }
 
 export interface DividendRecord {
     id: string;
-    ownerId: number; // 株を保有している yuvomi ユーザーの id
+    ownerId: number; // id of the yuvomi user who holds the shares
     currency: Currency;
     ticker: string;
     name: string;
-    shares: number; // 保有株数（1 以上の整数）。全受取日で共通
-    payments: Payment[]; // 1 件以上 MAX_PAYMENTS 件以下。payDate の昇順で重複なし
+    shares: number; // shares held (integer, 1 or more), shared by all pay dates
+    payments: Payment[]; // 1 to MAX_PAYMENTS items, ascending by payDate, no duplicates
     createdBy: number;
     createdAt: string; // ISO 8601
     updatedAt: string; // ISO 8601
@@ -49,12 +49,12 @@ export interface RecordInput {
 
 export interface OwnerTotal {
     ownerId: number;
-    total: number; // amount の単位。1 以上
+    total: number; // in the amount unit, 1 or more
 }
 
-/** 合計と保有者ごとの内訳（owners は ownerId の昇順、0 の保有者は含めない）。 */
+/** A total and its breakdown by holder (owners ascending by ownerId, holders with 0 omitted). */
 export interface Breakdown {
-    total: number; // owners の total の和
+    total: number; // sum of the owners' totals
     owners: OwnerTotal[];
 }
 
@@ -62,16 +62,16 @@ export interface CurrencyBreakdown extends Breakdown {
     currency: Currency;
 }
 
-/** 利用者が年を指定して登録した、その年の配当合計（登録時点の記録の 1 年分）。 */
+/** The dividend total a user registered for a year (one year of the records at that moment). */
 export interface YearlyTotal {
-    year: number; // MIN_YEAR〜MAX_YEAR
-    totals: CurrencyBreakdown[]; // 通貨の順で重複なし。total が 0 の通貨は含めない
+    year: number; // MIN_YEAR to MAX_YEAR
+    totals: CurrencyBreakdown[]; // in currency order, no duplicates, currencies with 0 omitted
     registeredBy: number;
     registeredAt: string; // ISO 8601
 }
 
 const MAX_SHARES = 10_000_000;
-const MAX_PER_SHARE_CENTS = 10_000_000; // JPY は 100,000 円、JPY 以外は 1,000
+const MAX_PER_SHARE_CENTS = 10_000_000; // JPY: 100,000 yen, others: 1,000
 export const MAX_PAYMENTS = 24;
 export const MIN_YEAR = 2000;
 export const MAX_YEAR = 2100;
@@ -89,7 +89,7 @@ export function isCurrency(value: unknown): value is Currency {
     return typeof value === 'string' && (CURRENCIES as readonly string[]).includes(value);
 }
 
-/** 1株配当の小数の桁数。 */
+/** Number of decimal places for the dividend per share. */
 export function perShareDecimals(currency: Currency): number {
     return currency === 'JPY' ? 2 : 4;
 }
@@ -110,7 +110,7 @@ export function parsePerShare(text: string, currency: Currency): number | null {
     return units <= BigInt(MAX_PER_SHARE_CENTS) ? Number(units) : null;
 }
 
-/** 受取額。amount の単位（JPY は 1 円、JPY 以外は 1/100）未満は切り捨て。 */
+/** Amount received, floored to the amount unit (JPY: 1 yen, others: 1/100). */
 export function calcAmount(shares: number, perShareCents: number): number {
     return Number((BigInt(shares) * BigInt(perShareCents)) / 100n);
 }
@@ -129,7 +129,7 @@ export function isValidDate(text: string): boolean {
     );
 }
 
-/** 'MM-DD' がうるう年（2000 年）に実在する月日か。 */
+/** Whether 'MM-DD' is a real day in a leap year (2000). */
 export function isValidPayDate(text: string): boolean {
     return /^\d{2}-\d{2}$/.test(text) && isValidDate(`2000-${text}`);
 }
@@ -145,10 +145,10 @@ export type InputErrorCode =
     | 'per_share_invalid'
     | 'pay_date_duplicate';
 
-/** 入力エラー。文言は画面が code で翻訳する（locales の errors.<code>）。 */
+/** An input error. The UI translates it by code (errors.<code> in locales). */
 export interface InputError {
     code: InputErrorCode;
-    params?: Record<string, number>; // payments_too_many: { max }、per_share_invalid: { decimals }
+    params?: Record<string, number>; // payments_too_many: { max }, per_share_invalid: { decimals }
 }
 
 export function validateInput(input: RecordInput): InputError | null {
@@ -172,7 +172,7 @@ export function validateInput(input: RecordInput): InputError | null {
     return null;
 }
 
-/** validateInput を通った入力から payments を作る（payDate の昇順）。 */
+/** Builds payments from input that passed validateInput (ascending by payDate). */
 export function buildPayments(
     shares: number,
     inputs: PaymentInput[],
@@ -215,12 +215,12 @@ function isValidPayment(
     );
 }
 
-/** 通貨を持たない記録（v0.4 以前の形）。 */
+/** A record without a currency (the shape up to v0.4). */
 type RecordWithoutCurrency = Omit<DividendRecord, 'currency'>;
 
 /**
- * 記録の形を調べる（通貨は調べない）。
- * 日付の形式（v0.4 以降は MM-DD、v0.3 は YYYY-MM-DD）だけ差し替えられる。
+ * Checks the shape of a record (not its currency).
+ * Only the date format can vary (MM-DD from v0.4, YYYY-MM-DD in v0.3).
  */
 function isRecordShape(
     value: unknown,
@@ -250,7 +250,7 @@ function isRecordShape(
     );
 }
 
-/** 移行した記録を v0.5 の形にする（通貨は JPY、項目は v0.5 の分だけ）。 */
+/** Turns a migrated record into the v0.5 shape (JPY, only the v0.5 fields). */
 function toJpyRecord(r: RecordWithoutCurrency): DividendRecord {
     return {
         id: r.id,
@@ -273,18 +273,18 @@ export function isValidRecord(value: unknown): value is DividendRecord {
     );
 }
 
-/** v0.4 形式（通貨なし）の記録に JPY を付ける。不正なら null。 */
+/** Adds JPY to a v0.4 record (no currency). Returns null if it is invalid. */
 export function migrateV4Record(value: unknown): DividendRecord | null {
     return isRecordShape(value, isValidPayDate) ? toJpyRecord(value) : null;
 }
 
 /**
- * v0.3 形式（payDate が YYYY-MM-DD）の記録を v0.5 形式（MM-DD、JPY）に変換する。不正なら null。
- * 同じ月日が複数あれば、最も新しい年のものを残す。
+ * Converts a v0.3 record (payDate is YYYY-MM-DD) to v0.5 (MM-DD, JPY). Returns null if it is invalid.
+ * When the same month and day appears in several years, the newest year is kept.
  */
 export function migrateV3Record(value: unknown): DividendRecord | null {
     if (!isRecordShape(value, isValidDate)) return null;
-    // payments は年月日の昇順なので、後のもの（新しい年）で上書きすれば新しい年が残る
+    // payments are in date order, so later (newer) entries overwrite older ones
     const byDay = new Map<string, Payment>();
     for (const payment of value.payments) {
         const payDate = payment.payDate.substring(5);
@@ -294,7 +294,7 @@ export function migrateV3Record(value: unknown): DividendRecord | null {
     return toJpyRecord({ ...value, payments });
 }
 
-/** v0.2 形式（payDate を 1 つだけ持つ記録）を v0.5 形式（JPY）に変換する。不正なら null。 */
+/** Converts a v0.2 record (a single payDate) to v0.5 (JPY). Returns null if it is invalid. */
 export function migrateLegacyRecord(value: unknown): DividendRecord | null {
     if (typeof value !== 'object' || value === null) return null;
     const r = value as Record<string, unknown>;
@@ -365,7 +365,7 @@ function toBreakdown(byOwner: Map<number, number>): Breakdown {
     return { total: owners.reduce((sum, o) => sum + o.total, 0), owners };
 }
 
-/** 記録の 1 年分の受取額の合計と保有者ごとの内訳を、通貨ごとに（通貨の順、0 の通貨は除く）。 */
+/** One year of amounts with a breakdown by holder, per currency (in currency order, 0 omitted). */
 export function annualTotals(records: DividendRecord[]): CurrencyBreakdown[] {
     const result: CurrencyBreakdown[] = [];
     for (const currency of CURRENCIES) {
@@ -398,7 +398,7 @@ function isValidYear(value: unknown): value is number {
     );
 }
 
-/** owners が ownerId の厳密な昇順・各 total が 1 以上で、total がその和なら true。 */
+/** True when owners are strictly ascending by ownerId, each total is 1 or more, and total is their sum. */
 function isValidBreakdown(owners: unknown, total: unknown): boolean {
     if (!Array.isArray(owners)) return false;
     let sum = 0;
@@ -440,7 +440,7 @@ export function isValidYearlyTotal(value: unknown): value is YearlyTotal {
     return true;
 }
 
-/** v0.4 形式（{ year, total, owners, ... } の円の合計）を v0.5 形式にする。不正なら null。 */
+/** Converts a v0.4 yearly total ({ year, total, owners, ... } in yen) to v0.5. Returns null if it is invalid. */
 export function migrateV4YearlyTotal(value: unknown): YearlyTotal | null {
     if (typeof value !== 'object' || value === null) return null;
     const t = value as Record<string, unknown>;
@@ -459,7 +459,7 @@ export function migrateV4YearlyTotal(value: unknown): YearlyTotal | null {
     };
 }
 
-/** 'YYYY' を MIN_YEAR〜MAX_YEAR の整数にする。それ以外は null。 */
+/** Parses 'YYYY' into an integer from MIN_YEAR to MAX_YEAR, otherwise null. */
 export function parseYear(text: string): number | null {
     if (!/^\d{4}$/.test(text)) return null;
     const year = Number(text);
@@ -467,10 +467,10 @@ export function parseYear(text: string): number | null {
 }
 
 export interface MonthlyTotal extends Breakdown {
-    month: number; // 1〜12
+    month: number; // 1 to 12
 }
 
-/** 1〜12 月それぞれの、その通貨の受取額の合計（記録の 1 年分）と、保有者ごとの内訳。 */
+/** For each month 1 to 12, the total in that currency (one year of records) with a breakdown by holder. */
 export function monthlyTotals(records: DividendRecord[], currency: Currency): MonthlyTotal[] {
     const byOwner = Array.from({ length: 12 }, () => new Map<number, number>());
     for (const record of records) {
@@ -489,8 +489,8 @@ export interface YearlyBar extends Breakdown {
 }
 
 /**
- * 年別グラフ用。endYear までの CHART_YEARS 年分を年の昇順で返す。登録の無い年・通貨は 0。
- * ownerId が null でなければ、その保有者の分だけにする。
+ * For the yearly chart: CHART_YEARS years up to endYear, ascending. Years or currencies not registered are 0.
+ * When ownerId is not null, only that holder is counted.
  */
 export function yearlyChart(
     totals: YearlyTotal[],
@@ -510,7 +510,7 @@ export function yearlyChart(
     });
 }
 
-/** 記録と年別合計に出てくる通貨（重複なし、通貨の順）。 */
+/** Currencies used in the records and yearly totals (no duplicates, in currency order). */
 export function usedCurrencies(records: DividendRecord[], totals: YearlyTotal[]): Currency[] {
     const used = new Set<Currency>(records.map((r) => r.currency));
     for (const t of totals) {
@@ -519,7 +519,7 @@ export function usedCurrencies(records: DividendRecord[], totals: YearlyTotal[])
     return CURRENCIES.filter((c) => used.has(c));
 }
 
-/** 一覧表示用。ticker → ownerId → id の昇順。 */
+/** For the list: ascending by ticker, then ownerId, then id. */
 export function sortForList(records: DividendRecord[]): DividendRecord[] {
     return [...records].sort(
         (a, b) =>
@@ -527,20 +527,20 @@ export function sortForList(records: DividendRecord[]): DividendRecord[] {
     );
 }
 
-/** 0 以上の整数を、小数 decimals 桁の固定小数として整数部と小数部の文字列に分ける。 */
+/** Splits a non-negative integer, read as a fixed-point number with `decimals` places, into whole and fraction strings. */
 function splitFixed(value: number, decimals: number): [string, string] {
     const digits = String(value).padStart(decimals + 1, '0');
     return [digits.slice(0, digits.length - decimals), digits.slice(digits.length - decimals)];
 }
 
-/** 金額の小数の桁数（JPY は 0、それ以外は 2）。 */
+/** Decimal places of an amount (JPY: 0, others: 2). */
 export function amountDecimals(currency: Currency): number {
     return currency === 'JPY' ? 0 : 2;
 }
 
 /**
- * 金額を小数の文字列にする（1234 JPY → '1234'、123456 USD → '1234.56'）。
- * 3 桁区切り・通貨記号は付けない（表示は画面が Intl で整える）。
+ * Writes an amount as a decimal string (1234 JPY → '1234', 123456 USD → '1234.56').
+ * No grouping or currency symbol; the UI formats it with Intl.
  */
 export function amountDecimal(amount: number, currency: Currency): string {
     const decimals = amountDecimals(currency);
@@ -549,7 +549,7 @@ export function amountDecimal(amount: number, currency: Currency): string {
     return `${whole}.${fraction}`;
 }
 
-/** 1株配当を入力欄用の文字列に戻す（3750 JPY → '37.5'、2475 USD → '0.2475'）。 */
+/** Turns a dividend per share back into input text (3750 JPY → '37.5', 2475 USD → '0.2475'). */
 export function perShareInputText(perShareCents: number, currency: Currency): string {
     const [whole, fraction] = splitFixed(perShareCents, perShareDecimals(currency));
     const trimmed = fraction.replace(/0+$/, '');

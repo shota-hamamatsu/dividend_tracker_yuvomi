@@ -2,8 +2,8 @@ import { fileURLToPath } from 'node:url';
 import { mergeConfig } from 'vite';
 import devConfig from './vite.dev.config.ts';
 
-// 画面確認ページ（dev/）を GitHub Pages 用の静的ファイルにビルドする。
-// /api.js の差し替えは開発用の設定をそのまま使う。
+// Builds the preview page (dev/) as static files for GitHub Pages.
+// The /api.js and /i18n.js mocks come from the dev config.
 export default mergeConfig(devConfig, {
     base: '/dividend_tracker_yuvomi/',
     build: {

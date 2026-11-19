@@ -55,7 +55,7 @@ function pay(payDate: string, perShareCents = 1000, amount = 1000) {
     return { payDate, perShareCents, amount };
 }
 
-/** 01-01 から n 日分の月日 */
+/** n month-days starting at 01-01 */
 function days(n: number): string[] {
     return Array.from({ length: n }, (_, i) => `01-${String(i + 1).padStart(2, '0')}`);
 }
@@ -118,7 +118,7 @@ test('parsePerShare (JPY) converts to hundredths without floats', () => {
     assert.equal(parsePerShare('0.05', 'JPY'), 5);
     assert.equal(parsePerShare('12', 'JPY'), 1200);
     assert.equal(parsePerShare('0', 'JPY'), 0);
-    assert.equal(parsePerShare('0.29', 'JPY'), 29); // 0.29*100 は浮動小数点だと 28.999...
+    assert.equal(parsePerShare('0.29', 'JPY'), 29); // 0.29*100 is 28.999... in floating point
     assert.equal(parsePerShare('100000', 'JPY'), 10_000_000);
     for (const bad of ['', '1.234', '-1', '1e3', ' 1', '.5', '1.', 'abc', '100000.01']) {
         assert.equal(parsePerShare(bad, 'JPY'), null, bad);
@@ -138,13 +138,13 @@ test('parsePerShare (other currencies) converts to ten-thousandths without float
 });
 
 test('calcAmount floors below the amount unit', () => {
-    assert.equal(calcAmount(3, 3750), 112); // 112.5 円 → 112 円
+    assert.equal(calcAmount(3, 3750), 112); // 112.5 yen → 112 yen
     assert.equal(calcAmount(100, 3750), 3750);
     assert.equal(calcAmount(1, 5), 0);
     assert.equal(calcAmount(10_000_000, 10_000_000), 1_000_000_000_000);
-    // USD 0.2475 × 3 株 = USD 0.7425 → 1 セント未満切り捨てで 74 セント
+    // USD 0.2475 × 3 shares = USD 0.7425 → floored to 74 cents
     assert.equal(calcAmount(3, 2475), 74);
-    // USD 0.26 × 50 株 = USD 13.00
+    // USD 0.26 × 50 shares = USD 13.00
     assert.equal(calcAmount(50, 2600), 1300);
 });
 
@@ -182,7 +182,7 @@ test('validateInput', () => {
     assert.deepEqual(validateInput({ ...ok, ownerId: 1.5 }), { code: 'owner_required' });
     assert.deepEqual(validateInput({ ...ok, currency: '' }), { code: 'currency_required' });
     assert.deepEqual(validateInput({ ...ok, currency: 'XYZ' }), { code: 'currency_required' });
-    // 保有者の判定が先
+    // The holder is checked first
     assert.deepEqual(validateInput({ ...ok, ownerId: 0, currency: 'XYZ' }), {
         code: 'owner_required',
     });
@@ -197,18 +197,18 @@ test('validateInput', () => {
     });
     assert.deepEqual(validateInput({ ...ok, payments: [p('03-31'), p('02-30')] }), dateError);
     assert.deepEqual(validateInput({ ...ok, payments: [p('')] }), dateError);
-    // 年付きの日付は受け付けない
+    // Dates with a year are rejected
     assert.deepEqual(validateInput({ ...ok, payments: [p('2025-03-31')] }), dateError);
     assert.deepEqual(validateInput({ ...ok, payments: [p('03-31', '1.234')] }), perShareError);
     assert.deepEqual(validateInput({ ...ok, payments: [p('03-31', '')] }), perShareError);
-    // 隣り合っていない重複も検出する
+    // Duplicates are found even when not adjacent
     assert.deepEqual(validateInput({ ...ok, payments: [p('03-31'), p('09-30'), p('03-31')] }), {
         code: 'pay_date_duplicate',
     });
-    // 0 円の受取日は許可
+    // A zero-yen pay date is allowed
     assert.deepEqual(validateInput({ ...ok, payments: [p('03-31', '0')] }), null);
 
-    // JPY 以外は小数第4位まで
+    // Other currencies allow up to 4 decimal places
     const usd = { ...ok, currency: 'USD', payments: [p('02-13', '0.2475')] };
     assert.deepEqual(validateInput(usd), null);
     assert.deepEqual(validateInput({ ...usd, payments: [p('02-13', '0.12345')] }), {
@@ -239,7 +239,7 @@ test('buildPayments sorts by date and floors each amount', () => {
     assert.deepEqual(buildPayments(50, [{ payDate: '02-13', perShareText: '0.26' }], 'USD'), [
         { payDate: '02-13', perShareCents: 2600, amount: 1300 },
     ]);
-    // 同じ文字列でも通貨で単位が変わる
+    // The same text means a different unit per currency
     assert.deepEqual(buildPayments(3, [{ payDate: '02-13', perShareText: '0.2475' }], 'USD'), [
         { payDate: '02-13', perShareCents: 2475, amount: 74 },
     ]);
@@ -269,7 +269,7 @@ test('isValidRecord / parseRecords', () => {
     delete noCurrency.currency;
     assert.equal(isValidRecord(noCurrency), false);
     assert.equal(isValidRecord(rec({ shares: 0, payments: [pay('01-01', 1000, 0)] })), false);
-    // 株数だけ変えて amount が合わなくなった記録は不正
+    // Changing only the shares makes the amounts wrong, so the record is invalid
     assert.equal(isValidRecord(rec({ shares: 200 })), false);
     const noUpdatedAt: Partial<DividendRecord> = rec({});
     delete noUpdatedAt.updatedAt;
@@ -284,7 +284,7 @@ test('isValidRecord / parseRecords', () => {
     assert.deepEqual(parseRecords(JSON.stringify([good, { id: 'b' }])), [good]);
 });
 
-/** 通貨を持たない記録（v0.4 以前の形）。 */
+/** A record without a currency (the shape up to v0.4). */
 function withoutCurrency(record: DividendRecord): Partial<DividendRecord> {
     const copy: Partial<DividendRecord> = { ...record };
     delete copy.currency;
@@ -296,7 +296,7 @@ test('migrateV4Record adds JPY to v0.4 records', () => {
     const migrated = migrateV4Record(v4);
     assert.deepEqual(migrated, { ...v4, currency: 'JPY' });
     assert.equal(isValidRecord(migrated), true);
-    // 元に通貨があっても JPY にする
+    // JPY even when the input already has a currency
     assert.equal(migrateV4Record(rec({ currency: 'USD' }))?.currency, 'JPY');
     assert.equal(migrateV4Record(withoutCurrency(rec({ shares: 200 }))), null);
     assert.equal(migrateV4Record(withoutCurrency(rec({ payments: [pay('2025-01-01')] }))), null);
@@ -321,11 +321,11 @@ test('migrateV3Record drops the year and keeps the newest year per month-day', (
         payments: [pay('03-31', 1000, 1000), pay('06-03', 5000, 5000), pay('11-27', 4500, 4500)],
     });
     assert.equal(isValidRecord(migrated), true);
-    // 2024-02-29 は 02-29 として残る
+    // 2024-02-29 is kept as 02-29
     assert.deepEqual(migrateV3Record(rec({ payments: [pay('2024-02-29')] }))?.payments, [
         pay('02-29'),
     ]);
-    // v0.3 として不正なもの
+    // Invalid as v0.3
     assert.equal(migrateV3Record(rec({ payments: [pay('2025-01-01', 1000, 999)] })), null);
     assert.equal(migrateV3Record(rec({ payments: [pay('2025-09-30'), pay('2025-03-31')] })), null);
     assert.equal(migrateV3Record(rec({ payments: [pay('01-01')] })), null);
@@ -387,11 +387,11 @@ test('recordTotal and annualTotals sum one year of payments per owner', () => {
             payments: [pay('03-31', 1000, 1000), pay('09-30', 1500, 1500)],
         }),
         rec({ id: 'b', ownerId: 1, shares: 50, payments: [pay('06-30', 1000, 500)] }),
-        // 同じ保有者の別記録は合算する
+        // Records of the same holder are added together
         rec({ id: 'c', ownerId: 2, payments: [pay('12-01', 1000, 1000)] }),
-        // 0 円の保有者は内訳に入れない
+        // Holders with 0 yen are left out of the breakdown
         rec({ id: 'd', ownerId: 3, payments: [pay('01-01', 0, 0)] }),
-        // 通貨ごとに分ける（USD が先に並んでいても結果は通貨の順）
+        // Split by currency (in currency order even when USD comes first)
         rec({
             id: 'e',
             ownerId: 1,
@@ -411,7 +411,7 @@ test('recordTotal and annualTotals sum one year of payments per owner', () => {
                 { ownerId: 2, total: 3500 },
             ],
         },
-        // 0 の通貨（EUR）は含めない
+        // A currency with 0 (EUR) is left out
         { currency: 'USD', total: 1300, owners: [{ ownerId: 1, total: 1300 }] },
     ];
     assert.deepEqual(annualTotals(list), expected);
@@ -428,7 +428,7 @@ test('recordTotal and annualTotals sum one year of payments per owner', () => {
 
 test('isValidYearlyTotal', () => {
     const usd = { currency: 'USD' as const, total: 500, owners: [{ ownerId: 1, total: 500 }] };
-    /** JPY の内訳だけを差し替えた年別合計（形の検査用に unknown で返す）。 */
+    /** A yearly total with only the JPY breakdown changed (unknown, for shape checks). */
     const jpy = (over: Record<string, unknown>): unknown =>
         yt({ totals: [{ ...JPY_3000, ...over }] });
     assert.equal(isValidYearlyTotal(yt({})), true);
@@ -440,11 +440,11 @@ test('isValidYearlyTotal', () => {
     assert.equal(isValidYearlyTotal(yt({ year: 1999 })), false);
     assert.equal(isValidYearlyTotal(yt({ year: 2101 })), false);
     assert.equal(isValidYearlyTotal(yt({ year: 2025.5 })), false);
-    // 通貨の順の逆転・重複・不正な通貨
+    // Reversed currency order, duplicates, unknown currency
     assert.equal(isValidYearlyTotal(yt({ totals: [usd, JPY_3000] })), false);
     assert.equal(isValidYearlyTotal(yt({ totals: [usd, usd] })), false);
     assert.equal(isValidYearlyTotal(jpy({ currency: 'XYZ' })), false);
-    // 和の食い違い・0 の通貨・0 円の保有者・不正な ownerId・昇順でない owners
+    // Wrong sum, a currency with 0, a holder with 0, invalid ownerId, owners out of order
     assert.equal(isValidYearlyTotal(jpy({ total: 2999 })), false);
     assert.equal(isValidYearlyTotal(jpy({ total: 0, owners: [] })), false);
     assert.equal(
@@ -475,7 +475,7 @@ test('isValidYearlyTotal', () => {
         false,
     );
     assert.equal(isValidYearlyTotal(yt({ registeredBy: 0 })), false);
-    // v0.4 の形は受け付けない
+    // The v0.4 shape is rejected
     const { currency: _currency, ...v4Fields } = JPY_3000;
     void _currency;
     assert.equal(
@@ -544,7 +544,7 @@ test('perShareInputText', () => {
     assert.equal(perShareInputText(10000, 'USD'), '1');
     assert.equal(perShareInputText(2600, 'USD'), '0.26');
     assert.equal(perShareInputText(1, 'USD'), '0.0001');
-    // 入力欄に戻した値をもう一度解析すると同じ値になる
+    // Parsing the input text again gives the same value
     for (const [value, currency] of [
         [3750, 'JPY'],
         [7, 'JPY'],
@@ -590,9 +590,9 @@ test('monthlyTotals splits each month by owner', () => {
     const list = [
         rec({ id: 'a', ownerId: 2, payments: [pay('06-02', 1000, 1000)] }),
         rec({ id: 'b', ownerId: 1, payments: [pay('06-30', 1000, 1000)] }),
-        // 同じ保有者の別記録は合算する
+        // Records of the same holder are added together
         rec({ id: 'c', ownerId: 2, shares: 50, payments: [pay('06-15', 1000, 500)] }),
-        // 0 円の保有者は内訳に入れない
+        // Holders with 0 yen are left out of the breakdown
         rec({ id: 'd', ownerId: 3, payments: [pay('06-20', 0, 0), pay('07-01')] }),
     ];
     const months = monthlyTotals(list, 'JPY');
@@ -634,7 +634,7 @@ test('monthlyTotals counts only the given currency', () => {
 test('yearlyChart returns CHART_YEARS years ending at endYear, filtered by owner', () => {
     const usd = { currency: 'USD' as const, total: 700, owners: [{ ownerId: 2, total: 700 }] };
     const totals = [
-        yt({ year: 2014 }), // 範囲外（2015〜2026）
+        yt({ year: 2014 }), // outside the range (2015 to 2026)
         yt({
             year: 2020,
             totals: [{ currency: 'JPY', total: 1000, owners: [{ ownerId: 1, total: 1000 }] }],
@@ -666,7 +666,7 @@ test('yearlyChart returns CHART_YEARS years ending at endYear, filtered by owner
     assert.deepEqual(owner2[11]?.owners, [{ ownerId: 2, total: 2000 }]);
     assert.deepEqual(owner2[5], { year: 2020, total: 0, owners: [] });
 
-    // 通貨ごと
+    // Per currency
     const dollars = yearlyChart(totals, 2026, null, 'USD');
     assert.deepEqual(
         dollars.map((b) => b.total),

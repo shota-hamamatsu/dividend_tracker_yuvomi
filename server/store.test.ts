@@ -19,7 +19,7 @@ const record: DividendRecord = {
     updatedAt: '2025-04-01T00:00:00.000Z',
 };
 
-/** 通貨を持たない記録（v0.4 以前の形）。 */
+/** A record without a currency (the shape up to v0.4). */
 function withoutCurrency(r: DividendRecord): Partial<DividendRecord> {
     const copy: Partial<DividendRecord> = { ...r };
     delete copy.currency;
@@ -33,7 +33,7 @@ const total2025: YearlyTotal = {
     registeredAt: '2025-12-31T00:00:00.000Z',
 };
 
-/** 年別合計の [年, JPY の合計] の一覧。 */
+/** [year, JPY total] for each yearly total. */
 const yenByYear = (totals: YearlyTotal[]) =>
     totals.map((t) => [t.year, t.totals.find((c) => c.currency === 'JPY')?.total ?? 0]);
 
@@ -53,7 +53,7 @@ test('file store persists, reloads and drops invalid rows', () =>
         await Promise.all([store.add(record), store.add({ ...record, id: 'b' })]);
         assert.equal(await store.remove('b'), true);
         assert.equal(await store.remove('missing'), false);
-        const edited = { ...record, name: 'トヨタ', updatedAt: '2025-05-01T00:00:00.000Z' };
+        const edited = { ...record, name: 'Toyota', updatedAt: '2025-05-01T00:00:00.000Z' };
         assert.equal(await store.update(edited), true);
         assert.equal(await store.update({ ...record, id: 'missing' }), false);
         assert.deepEqual(store.list(), [edited]);
@@ -61,7 +61,7 @@ test('file store persists, reloads and drops invalid rows', () =>
 
         await store.putYearlyTotal({ ...total2025, year: 2026 });
         await store.putYearlyTotal({ ...total2025, totals: [] });
-        await store.putYearlyTotal(total2025); // 同じ年は置き換える
+        await store.putYearlyTotal(total2025); // the same year is replaced
         assert.deepEqual(yenByYear(store.listYearlyTotals()), [
             [2025, 4500],
             [2026, 4500],
@@ -109,7 +109,7 @@ test('file store migrates version 3 files to records with a currency', () =>
                 yearlyTotals: [
                     v4Total,
                     { ...v4Total, year: 2024, total: 0, owners: [] },
-                    { ...v4Total, year: 2023, total: 1 }, // 和が合わない
+                    { ...v4Total, year: 2023, total: 1 }, // the sum does not match
                 ],
             }),
         );
@@ -186,7 +186,7 @@ test('file store migrates version 1 files and rejects unknown versions', () =>
         assert.deepEqual(store.list(), [{ ...record, id: 'old' }]);
         assert.deepEqual(store.listYearlyTotals(), []);
 
-        // 書き込むと version 4 になる
+        // Writing upgrades the file to version 4
         await store.add({ ...record, id: 'new' });
         const saved = JSON.parse(await readFile(file, 'utf8'));
         assert.equal(saved.version, 4);

@@ -11,7 +11,7 @@ import type { DividendRecord, YearlyTotal } from '../src/logic.ts';
 const ORIGIN = 'https://yuvomi.example.com';
 const TOKEN = 'a'.repeat(64);
 
-// Cookie の session=<名前> で利用者を切り替える
+// The cookie session=<name> picks the user
 const USERS: Record<string, Me> = {
     admin: { id: 1, isAdmin: true, access: 'write' },
     alice: { id: 2, isAdmin: false, access: 'write' },
@@ -38,7 +38,7 @@ function existing(id: string, ownerId: number): DividendRecord {
         ownerId,
         currency: 'JPY',
         ticker: '7203',
-        name: 'トヨタ',
+        name: 'Toyota',
         shares: 100,
         payments: [{ payDate: '03-31', perShareCents: 4500, amount: 4500 }],
         createdBy: ownerId,
@@ -93,13 +93,13 @@ function write(
 const input = {
     ownerId: 2,
     ticker: ' 8306 ',
-    name: ' 三菱UFJ ',
+    name: ' MUFG ',
     sharesText: '3',
     payments: [
-        { payDate: '12-01', perShareText: '40', amount: 999999 }, // amount は無視されるべき
+        { payDate: '12-01', perShareText: '40', amount: 999999 }, // amount must be ignored
         { payDate: '06-30', perShareText: '37.5' },
     ],
-    amount: 999999, // 無視されるべき
+    amount: 999999, // must be ignored
 };
 
 test('authentication and module permission', async () => {
@@ -132,7 +132,7 @@ test('GET returns all records, me and a CSRF cookie', async () => {
     assert.deepEqual(body.me, { id: 3, isAdmin: false, canWrite: false });
     assert.equal(cookie.slice('dt_csrf='.length, 'dt_csrf='.length + 64), body.csrfToken);
 
-    // 有効な Cookie があれば再発行しない
+    // A valid cookie is not reissued
     const again = await fetch(`${base}/records`, {
         headers: { cookie: `session=reader; dt_csrf=${TOKEN}` },
     });
@@ -229,9 +229,9 @@ test('POST stores a record with a server-computed amount', async () => {
     const { data } = (await res.json()) as { data: DividendRecord };
     assert.equal(data.ownerId, 2);
     assert.equal(data.ticker, '8306');
-    assert.equal(data.name, '三菱UFJ');
+    assert.equal(data.name, 'MUFG');
     assert.equal(data.shares, 3);
-    // 日付順に並べ、各回の受取額は 1 円未満切り捨て（3 × 37.5 = 112.5 → 112）
+    // Sorted by date, each amount floored to 1 yen (3 × 37.5 = 112.5 → 112)
     assert.deepEqual(data.payments, [
         { payDate: '06-30', perShareCents: 3750, amount: 112 },
         { payDate: '12-01', perShareCents: 4000, amount: 120 },
@@ -241,7 +241,7 @@ test('POST stores a record with a server-computed amount', async () => {
     assert.deepEqual(store.get(data.id), data);
     assert.equal(store.list().length, 3);
 
-    // 管理者は他人の分を追加できる
+    // Admins can add records for others
     const byAdmin = await write('POST', '/records', 'admin', { ...input, ownerId: 3 });
     assert.equal(byAdmin.status, 201);
     const added = ((await byAdmin.json()) as { data: DividendRecord }).data;
@@ -267,7 +267,7 @@ test('PUT edits a record, keeping id and creation info', async () => {
     assert.equal((await errorOf(missing)).code, 'record_not_found');
     const othersRecord = await write('PUT', '/records/r-admin', 'alice', edit);
     assert.equal((await errorOf(othersRecord)).code, 'not_owner_edit');
-    // 一般ユーザーは保有者を他人に付け替えられない
+    // Members cannot reassign the holder to someone else
     const reassign = await write('PUT', '/records/r-alice', 'alice', { ...edit, ownerId: 1 });
     assert.equal(reassign.status, 403);
     assert.equal((await errorOf(reassign)).code, 'not_owner_add');
@@ -288,7 +288,7 @@ test('PUT edits a record, keeping id and creation info', async () => {
     assert.deepEqual(store.get('r-alice'), data);
     assert.equal(store.list().length, 2);
 
-    // 管理者は他人の記録を編集でき、保有者も変えられる
+    // Admins can edit others' records and change the holder
     const byAdmin = await write('PUT', '/records/r-alice', 'admin', { ...edit, ownerId: 3 });
     assert.equal(byAdmin.status, 200);
     assert.equal(((await byAdmin.json()) as { data: DividendRecord }).data.ownerId, 3);
@@ -296,7 +296,7 @@ test('PUT edits a record, keeping id and creation info', async () => {
 
 test('POST / PUT store the currency and compute amounts in its unit', async () => {
     reset();
-    // 省略時は JPY（v0.4 の画面からの送信）
+    // JPY when omitted (a request from the v0.4 UI)
     const omitted = await write('POST', '/records', 'alice', input);
     assert.equal(omitted.status, 201);
     assert.equal(((await omitted.json()) as { data: DividendRecord }).data.currency, 'JPY');
@@ -311,7 +311,7 @@ test('POST / PUT store the currency and compute amounts in its unit', async () =
     assert.equal(res.status, 201);
     const { data } = (await res.json()) as { data: DividendRecord };
     assert.equal(data.currency, 'USD');
-    // USD 0.2475 × 3 = USD 0.7425 → 74 セント
+    // USD 0.2475 × 3 = USD 0.7425 → 74 cents
     assert.deepEqual(data.payments, [{ payDate: '02-13', perShareCents: 2475, amount: 74 }]);
     assert.deepEqual(store.get(data.id), data);
 
@@ -324,11 +324,11 @@ test('POST / PUT store the currency and compute amounts in its unit', async () =
         error: 'Choose a currency.',
         code: 'currency_required',
     });
-    // JPY では小数第3位以下を受け付けない
+    // JPY rejects a third decimal place
     const tooPrecise = await write('POST', '/records', 'alice', { ...usd, currency: 'JPY' });
     assert.equal(tooPrecise.status, 400);
 
-    // 通貨を変えると、新しい通貨の単位で計算し直す
+    // Changing the currency recomputes amounts in its unit
     const edit = {
         ...input,
         currency: 'EUR',
@@ -387,7 +387,7 @@ test('PUT /yearly-totals/<year> registers the total computed from stored records
     }
     assert.deepEqual(store.listYearlyTotals(), []);
 
-    // 管理者でなくても登録でき、金額はサーバーの記録から計算する（本文は使わない）
+    // Non-admins can register; the amount comes from the stored records (the body is ignored)
     const res = await write('PUT', '/yearly-totals/2026', 'alice', { total: 999999 });
     assert.equal(res.status, 200);
     const { data } = (await res.json()) as { data: YearlyTotal };
@@ -405,7 +405,7 @@ test('PUT /yearly-totals/<year> registers the total computed from stored records
     assert.equal(data.registeredBy, 2);
     assert.deepEqual(store.listYearlyTotals(), [data]);
 
-    // 同じ年は置き換える。年の昇順で返す
+    // The same year is replaced; results are ascending by year
     await store.remove('r-admin');
     const again = await write('PUT', '/yearly-totals/2026', 'admin');
     const replaced = ((await again.json()) as { data: YearlyTotal }).data;
@@ -414,7 +414,7 @@ test('PUT /yearly-totals/<year> registers the total computed from stored records
         [['JPY', 4500]],
     );
     assert.equal(replaced.registeredBy, 1);
-    // 通貨ごとに分けて登録する
+    // Registered per currency
     await store.add({
         ...existing('r-usd', 2),
         currency: 'USD',

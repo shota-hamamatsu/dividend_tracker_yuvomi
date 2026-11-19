@@ -1,97 +1,86 @@
 # dividend_tracker_yuvomi
 
-[yuvomi.cloud](https://github.com/ulsklyc/yuvomi) の拡張機能（モジュール）として、配当（分配金）の管理を行うプロジェクトです。
+A dividend tracker module for [yuvomi.cloud](https://github.com/ulsklyc/yuvomi). It is a dividend ledger the whole family can share.
 
-## 目的
+See the [latest release](https://github.com/shota-hamamatsu/dividend_tracker_yuvomi/releases/latest) for what changed in each version.
 
-- 保有銘柄ごとの配当の記録・管理
-- 受取予定・受取済みの配当の把握
-- 年間・月間の配当収入の集計
+## Features
 
-## 現状（v0.6.0）
+- **Holdings list** — record each stock by holder, ticker, name, share count and currency. Click a row to edit it in a dialog, or delete it with the × button.
+- **Multiple pay dates** — up to 24 pay dates (month and day) per stock, each with its own dividend per share.
+- **Server-side amounts** — each payment is shares × dividend per share, computed by the sidecar.
+  - JPY: dividend per share up to 2 decimal places, floored to 1 yen.
+  - Other currencies: up to 4 decimal places, floored to 1 cent (1/100).
+- **10 currencies** — JPY, USD, EUR, GBP, AUD, CAD, CHF, HKD, CNY and SGD. There is no currency conversion: totals and charts are shown per currency.
+- **Current total** — one year of dividends from the current records, per currency.
+- **Yearly totals** — choose a year and register the current total for everyone as that year's total. A registered year is replaced only after confirmation.
+- **Charts** — dividends by month, and registered totals for the last 12 years. Bars are stacked by holder, with tooltips and a legend. With two or more currencies, a currency picker switches both charts.
+- **Holder filter** — show the list, total and charts for one family member.
+- **Permissions** — members can add and edit only their own records. Admins can edit everyone's. Under yuvomi's Roles & permissions, "read" gives view-only access and "none" hides the module.
+- **27 languages** — follows yuvomi's display language, including dates, numbers and amounts. Arabic and Persian are shown right to left. Translations other than Japanese and English are machine-translation quality; please report mistakes in an issue.
 
-家族で共有できる配当台帳です。
+## Structure
 
-- 銘柄ごとの記録（保有者・銘柄コード・銘柄名・保有株数・**通貨**）に、**受取日を複数**（最大 24 件、月日のみ）登録できます。受取日ごとに 1株当たり配当を設定します
-- 通貨は円・米ドル・ユーロ・英ポンド・豪ドル・カナダドル・スイスフラン・香港ドル・人民元・シンガポールドルから選べます。為替の換算はせず、合計額とグラフは通貨ごとに分けて出します（通貨が 2 つ以上あるとき、グラフの通貨を切り替えられます）
-- 受取額は受取日ごとに「保有株数 × 1株当たり配当」をサーバーで計算します
-  - 円: 1株配当は小数第2位まで、**1円未満切り捨て**
-  - 円以外: 1株配当は小数第4位まで、**1セント（1/100）未満切り捨て**
-- 画面は上から銘柄一覧（見出しの右に保有者フィルタ）、現在の合計額、月別配当額、年別配当額（12 年分）の棒グラフ
-- 年を指定して「確定」を押すと、その時点の全員分の合計額をその年の配当合計として登録します（登録済みの年は確認のうえ置き換え）。年別配当額のグラフは登録した値を表示します
-- 追加は「追加」ボタン、編集は銘柄一覧の行クリックで開くダイアログで行います
-- データはサイドカーサービスに保存し、家族全員が閲覧できます
-- 追加・編集できるのは**自分が保有者の記録だけ**です。管理者は全員分を追加・編集できます
-- yuvomi の「役割と権限」で `配当管理` を「閲覧のみ」にしたユーザーは閲覧だけ、「なし」にしたユーザーは使えません
-- 表示言語は yuvomi の設定に合わせて切り替わります。yuvomi と同じ 27 言語に対応し、日付・数値・金額も言語に合わせて書きます（アラビア語・ペルシャ語は右から左）
-  - 日本語・英語以外の翻訳は機械翻訳と同程度の質です。誤りがあれば Issue で教えてください
+The module is written in TypeScript and built into a single JavaScript file that yuvomi loads.
+yuvomi modules run only in the browser, so the data is stored by a separate service running next to yuvomi (a sidecar), as described in "Modules With A Backend Service" in yuvomi's [MODULES.md](https://github.com/ulsklyc/yuvomi/blob/main/MODULES.md).
 
-v0.1.0 でブラウザ（localStorage）に保存していたデータは引き継がれません。
-v0.2.0 のサイドカーのデータ（`records.json` の version 1）は、起動時に受取日 1 件の記録として読み込まれ、次の保存で version 4 に書き換わります。
-v0.4.0 のデータ（version 3）は、記録・年別合計とも円（JPY）として読み込みます。
-v0.3.0 のデータ（version 2）は受取日の年を外して読み込みます（同じ月日が複数の年にあれば、最も新しい年のものを残します）。過去の年別合計は引き継がれないので、必要なら年を指定して登録し直してください。
-
-## 構成
-
-TypeScript で書き、画面は yuvomi が読み込める 1 ファイルの JS にビルドします。
-yuvomi のモジュールはブラウザだけで動くため、サーバー保存には yuvomi の横で動く別サービス（サイドカー）を使います（yuvomi の [MODULES.md](https://github.com/ulsklyc/yuvomi/blob/main/MODULES.md)「Modules With A Backend Service」の方式）。
-
-| 場所 | 内容 |
+| Path | Contents |
 | --- | --- |
-| `src/logic.ts` | 金額計算・検証・整形（画面とサイドカーで共通の純粋関数） |
-| `src/index.ts` | 画面（`render(container, context)`） |
-| `server/` | サイドカー（Node.js、npm 依存なし）。`/api/extensions/dividend-tracker/` で動く |
-| `modules/dividend-tracker/` | yuvomi に取り込まれるモジュール（`module.json`、`style.css`、ビルド済み `index.js`） |
-| `deploy/` | Docker Compose と Caddy の設定例 |
-| `docs/specs/` | 実装仕様書 |
+| `src/logic.ts` | Money calculations and validation (pure functions shared by the UI and the sidecar) |
+| `src/index.ts` | The UI (`render(container, context)`) |
+| `server/` | The sidecar (Node.js, no npm dependencies), served at `/api/extensions/dividend-tracker/` |
+| `modules/dividend-tracker/` | The module yuvomi installs (`module.json`, `style.css`, `locales/`, built `index.js`) |
+| `dev/` | A preview page with a mocked yuvomi and sidecar |
+| `deploy/` | Docker Compose and Caddy examples |
+| `docs/specs/` | Implementation specs |
 
-`modules/dividend-tracker/index.js` はビルド生成物ですが、GitHub の URL からインストールする際にビルドが走らないため、**リポジトリにコミットします**。ソースを変更したら必ず `npm run build` してください。
+`modules/dividend-tracker/index.js` is build output, but it is **committed** because installing from a GitHub URL does not run a build. Run `npm run build` after changing the source.
 
-## 開発
+## Development
 
-Node.js 22.12 以上が必要です。
+Requires Node.js 22.12 or later.
 
 ```bash
 npm install
-npm run dev         # 画面確認用ページ（http://localhost:5173/dev/。yuvomi・サイドカー不要。仕様: docs/specs/dev-preview.md）
-npm run lint        # ESLint
-npm run format:check # Prettier（整形は npm run format）
-npm run typecheck   # 型チェック
-npm test            # ロジックとサイドカーのテスト
-npm run build       # modules/dividend-tracker/index.js を生成
-npm run build:pages # 画面確認ページを dist/ に静的ビルド（GitHub Pages 用。仕様: docs/specs/github-pages-preview.md）
+npm run dev          # Preview page at http://localhost:5173/dev/ (no yuvomi or sidecar needed)
+npm run lint         # ESLint
+npm run format:check # Prettier (npm run format to fix)
+npm run typecheck    # Type check
+npm test             # Tests for the logic, sidecar and translation files
+npm run build        # Build modules/dividend-tracker/index.js
+npm run build:pages  # Build the preview page into dist/ for GitHub Pages
 ```
 
-画面確認ページは main への push で GitHub Pages に公開されます: https://shota-hamamatsu.github.io/dividend_tracker_yuvomi/dev/
+The preview page is published to GitHub Pages on every push to main: https://shota-hamamatsu.github.io/dividend_tracker_yuvomi/dev/ (add `?lang=de` and so on to choose a language).
 
-## yuvomi への導入
+## Installing in yuvomi
 
-画面（モジュール）とサイドカーの両方が必要です。
+You need both the module and the sidecar.
 
-### 1. サイドカーを動かす
+### 1. Run the sidecar
 
-`deploy/docker-compose.example.yml` と `deploy/Caddyfile.example` を参考に、yuvomi と同じオリジンで `/api/extensions/dividend-tracker/` をサイドカーへ転送します。**パスは書き換えずに**転送してください。
+Use `deploy/docker-compose.example.yml` and `deploy/Caddyfile.example` as a starting point, and route `/api/extensions/dividend-tracker/` on yuvomi's origin to the sidecar. **Do not rewrite the path.**
 
 ```bash
 docker build -f server/Dockerfile -t dividend-tracker-sidecar .
 ```
 
-| 環境変数 | 既定値 | 内容 |
+| Variable | Default | Description |
 | --- | --- | --- |
-| `PUBLIC_ORIGIN` | （必須） | ブラウザで開く yuvomi の URL（例 `https://yuvomi.example.com`） |
-| `YUVOMI_INTERNAL_URL` | `http://yuvomi:3000` | サイドカーから見た yuvomi |
-| `DATA_DIR` | `/data` | 保存先。`records.json` をバックアップしてください |
-| `PORT` | `8080` | 待ち受けポート |
+| `PUBLIC_ORIGIN` | (required) | The yuvomi URL opened in the browser, such as `https://yuvomi.example.com` |
+| `YUVOMI_INTERNAL_URL` | `http://yuvomi:3000` | yuvomi as seen from the sidecar |
+| `DATA_DIR` | `/data` | Where data is stored. Back up `records.json` |
+| `PORT` | `8080` | Port to listen on |
 
-サイドカーはリクエストごとに、ブラウザの Cookie を使って yuvomi の `/api/v1/auth/me` に本人と権限を問い合わせます。データベース（`yuvomi.db`）には触れません。
+For every request, the sidecar asks yuvomi's `/api/v1/auth/me` who the user is and what they may do, using the browser's cookie. It never touches yuvomi's database (`yuvomi.db`).
 
-### 2. モジュールを入れる
+### 2. Install the module
 
-- `modules/dividend-tracker/` を yuvomi の `modules/` フォルダにコピーする、または
-- 設定の「カスタムモジュールを追加」で `https://github.com/shota-hamamatsu/dividend_tracker_yuvomi/tree/main/modules/dividend-tracker` を指定する（サーバー側で `MODULES_ALLOW_WEB_INSTALL=true` が必要）。
+- Copy `modules/dividend-tracker/` into yuvomi's `modules/` folder, or
+- In settings, use "Add custom module" with `https://github.com/shota-hamamatsu/dividend_tracker_yuvomi/tree/main/modules/dividend-tracker` (requires `MODULES_ALLOW_WEB_INSTALL=true` on the server).
 
-新規モジュールは無効状態で追加され、管理者の承認後に有効になります。
+New modules are added disabled and become active once an admin approves them.
 
-## 今後
+### Upgrading
 
-- 受取予定の管理、税額・利回りの計算
+Update the sidecar and the module together. Back up `records.json` first: data from older versions is migrated automatically when the sidecar starts, and once it is saved in the new format, older versions cannot read it.

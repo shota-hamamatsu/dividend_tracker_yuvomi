@@ -1,4 +1,4 @@
-/* yuvomi のデザイントークンの近似値。本物は yuvomi の tokens.css。 */
+/* Approximations of yuvomi's design tokens. The real ones are in yuvomi's tokens.css. */
 :root {
     --space-1: 0.25rem;
     --space-2: 0.5rem;
@@ -36,7 +36,7 @@ body {
     font-family: system-ui, sans-serif;
 }
 
-/* ホスト側 CSS の代わり（最低限） */
+/* Stand-in for the host page CSS (minimal) */
 .page-toolbar {
     padding: var(--space-4) var(--space-6);
 }

@@ -5,7 +5,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 const DIR = new URL('../modules/dividend-tracker/locales/', import.meta.url);
 const SPEC = new URL('../docs/specs/dividend-tracker-i18n.md', import.meta.url);
 
-// yuvomi の public/locales と同じ 27 言語
+// The same 27 locales as yuvomi's public/locales
 const LOCALES = [
     'ar', 'cs', 'de', 'el', 'en', 'es', 'fa', 'fil', 'fr', 'hi', 'hu', 'id', 'it', 'ja',
     'ko', 'nb', 'nl', 'pl', 'pt', 'pt-BR', 'ru', 'sv', 'tr', 'uk', 'vi', 'zh', 'zh-Hant',
@@ -24,21 +24,21 @@ const placeholders = (text: string): string[] =>
     [...new Set([...text.matchAll(/\{\{(\w+)\}\}/g)].map((m) => m[1] ?? ''))].sort();
 
 const en = load('en');
-// 複数形のキーは en に <base>_other があるものだけ（errors.payments_too_many は複数形ではない）
+// Plural keys are only those with <base>_other in en (errors.payments_too_many is not plural)
 const pluralBases = new Set(
     Object.keys(en)
         .filter((key) => key.endsWith('_other'))
         .map((key) => key.slice(0, -'_other'.length)),
 );
 
-/** 複数形の接尾辞を除いたキー。 */
+/** The key without its plural suffix. */
 const baseKey = (key: string): string => {
     const base = key.replace(PLURAL, '');
     return base !== key && pluralBases.has(base) ? base : key;
 };
 const isPlural = (key: string): boolean => baseKey(key) !== key;
 
-/** en のキー（複数形は base）→ 差し込みの名前。複数形は _other の文で比べる。 */
+/** en key (base for plurals) → placeholder names. Plurals are compared with their _other text. */
 const enPlaceholders = new Map<string, string[]>();
 for (const [key, value] of Object.entries(en)) {
     if (isPlural(key) && !key.endsWith('_other')) continue;
@@ -68,15 +68,13 @@ for (const locale of LOCALES) {
 }
 
 test('ja.json and en.json match the table in the spec', () => {
-    const spec = readFileSync(SPEC, 'utf8');
-    // 「## 文言」の節の表だけを読む
-    const start = spec.indexOf('\n## 文言');
-    const end = spec.indexOf('\n## `module.json`');
-    assert.ok(start >= 0 && end > start, 'spec sections');
-    const section = spec.slice(start, end);
-    const rows = section
-        .split('\n')
-        .filter((line) => line.startsWith('| `'))
+    // Read only the string table: the one whose header ends with "| ja | en |"
+    const lines = readFileSync(SPEC, 'utf8').replace(/\r\n/g, '\n').split('\n');
+    const header = lines.findIndex((line) => line.endsWith('| ja | en |'));
+    assert.ok(header >= 0, 'string table in the spec');
+    const tableEnd = lines.findIndex((line, i) => i > header && !line.startsWith('|'));
+    const rows = lines
+        .slice(header + 2, tableEnd)
         .map((line) =>
             line
                 .slice(1, -1)
@@ -85,8 +83,9 @@ test('ja.json and en.json match the table in the spec', () => {
         )
         .filter((cells) => cells.length === 3);
     const cell = (text: string): string | undefined => {
-        if (text === '（なし）') return undefined;
-        // `, ` のように前後の空白を見せるためにバッククォートで囲んだ値
+        // An em dash means the locale has no such key
+        if (text === '—') return undefined;
+        // Values wrapped in backticks show leading or trailing spaces, such as `, `
         return /^`.*`$/.test(text) ? text.slice(1, -1) : text;
     };
     const expected: Record<'ja' | 'en', Record<string, string>> = { ja: {}, en: {} };

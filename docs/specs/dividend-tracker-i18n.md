@@ -200,7 +200,7 @@ export function validateInput(input: RecordInput): InputError | null
 | `list.col_total` | 合計 | Total |
 | `list.delete` | 削除 | Delete |
 | `list.delete_label` | {{label}} を削除 | Delete {{label}} |
-| `list.shares_one` | （なし） | {{shares}} share |
+| `list.shares_one` | — | {{shares}} share |
 | `list.shares_other` | {{shares}}株 | {{shares}} shares |
 | `list.confirm_delete` | 「{{label}}」（{{owner}}）を削除しますか？この操作は取り消せません。 | Delete "{{label}}" ({{owner}})? This cannot be undone. |
 | `totals.title` | 合計額 | Total |
@@ -270,7 +270,7 @@ export function validateInput(input: RecordInput): InputError | null
 | `errors.internal` | サーバーでエラーが発生しました | A server error occurred. |
 | `errors.yuvomi_unreachable` | yuvomi に接続できませんでした | Could not connect to yuvomi. |
 
-- 日本語は複数形の区別が無いので、`ja.json` は `list.shares_other` だけを持つ（表の「（なし）」は、そのキーを置かないという意味）。
+- 日本語は複数形の区別が無いので、`ja.json` は `list.shares_other` だけを持つ（表の「—」は、そのキーを置かないという意味）。
 - `{{year}}` には「年の読み上げ」の書き方（ja は `2026年`）が入る。日本語の文で「年」を重ねない。
 
 ## `module.json`

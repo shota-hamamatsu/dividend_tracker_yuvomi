@@ -4,7 +4,7 @@ import { installMockFetch, SCENARIOS, type Scenario } from './mock-records.ts';
 
 const bar = document.getElementById('dev-bar');
 const app = document.getElementById('app');
-if (!bar || !app) throw new Error('dev/index.html の要素が見つかりません');
+if (!bar || !app) throw new Error('Elements in dev/index.html are missing');
 
 const isScenario = (value: string | null): value is Scenario =>
     SCENARIOS.some((name) => name === value);
@@ -37,13 +37,13 @@ const initial: Scenario = isScenario(param) ? param : 'admin';
 const langParam = params.get('lang') ?? '';
 const initialLang = LOCALES.includes(langParam) ? langParam : 'ja';
 
-/** URL に scenario と lang を残す。 */
+/** Keeps scenario and lang in the URL. */
 function saveParams(scenario: string, lang: string): void {
     history.replaceState(null, '', `?scenario=${scenario}&lang=${lang}`);
 }
 
 const scenarioSelect = select(
-    'シナリオ',
+    'Scenario',
     SCENARIOS.map((name) => [name, name]),
     initial,
 );
@@ -55,10 +55,10 @@ scenarioSelect.addEventListener('change', () => {
 });
 
 const themeSelect = select(
-    'テーマ',
+    'Theme',
     [
-        ['light', 'ライト'],
-        ['dark', 'ダーク'],
+        ['light', 'Light'],
+        ['dark', 'Dark'],
     ],
     'light',
 );
@@ -67,7 +67,7 @@ themeSelect.addEventListener('change', () => {
 });
 
 const langSelect = select(
-    '言語',
+    'Language',
     LOCALES.map((code) => [code, code]),
     initialLang,
 );

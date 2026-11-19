@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 
-// 画面確認用の開発サーバー。yuvomi 本体の /api.js を偽物に差し替える。
+// Dev server for the preview page. Replaces yuvomi's /api.js and /i18n.js with mocks.
 export default defineConfig({
     publicDir: false,
     resolve: {

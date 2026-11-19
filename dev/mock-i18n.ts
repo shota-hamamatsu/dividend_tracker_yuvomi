@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-// yuvomi の /i18n.js の偽物。モジュールの locales/*.json から文言を引く。
+// Mock of yuvomi's /i18n.js. Looks strings up in the module's locales/*.json.
 const files = import.meta.glob<Record<string, string>>(
     '../modules/dividend-tracker/locales/*.json',
     {
@@ -8,7 +8,7 @@ const files = import.meta.glob<Record<string, string>>(
     },
 );
 
-/** 言語コード → 文言（キーは extensions.dividend-tracker. を外したもの）。 */
+/** Locale code → strings (keys without the extensions.dividend-tracker. prefix). */
 const BUNDLES = new Map<string, Record<string, string>>(
     Object.entries(files).map(([path, data]) => [
         path.slice(path.lastIndexOf('/') + 1, -'.json'.length),
@@ -31,7 +31,7 @@ export function getFormatLocale(): string {
     return current;
 }
 
-/** 言語を変え、yuvomi と同じく <html lang dir> を設定して locale-changed を出す。 */
+/** Changes the locale, sets <html lang dir> like yuvomi, and fires locale-changed. */
 export function setLocale(locale: string): void {
     current = BUNDLES.has(locale) ? locale : 'ja';
     document.documentElement.lang = current;

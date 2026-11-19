@@ -31,22 +31,22 @@ import {
 const ENDPOINT = '/api/extensions/dividend-tracker/records';
 const YEARLY_ENDPOINT = '/api/extensions/dividend-tracker/yearly-totals';
 const KEY_PREFIX = 'extensions.dividend-tracker.';
-const OWNER_COLORS = 8; // style.css の --dt-owner-1〜8
+const OWNER_COLORS = 8; // --dt-owner-1 to 8 in style.css
 
 type Params = Record<string, string | number>;
 
-/** モジュールの文言（locales/<言語>.json のキー）。 */
+/** A module string (a key in locales/<locale>.json). */
 function tr(key: string, params?: Params): string {
     return i18n.t(KEY_PREFIX + key, params);
 }
 
-/** 訳があれば訳、無ければ（t がキーのまま返したら）fallback のキーの訳。 */
+/** The translation, or the fallback key's translation when there is none (t returned the key). */
 function trOr(key: string, fallbackKey: string, params?: Params): string {
     const text = tr(key, params);
     return text === KEY_PREFIX + key ? tr(fallbackKey) : text;
 }
 
-/** Intl に渡せる言語タグか。渡せなければ 'en'。 */
+/** The tag if Intl accepts it, otherwise 'en'. */
 function safeLocale(tag: string | undefined): string {
     if (!tag) return 'en';
     try {
@@ -56,7 +56,7 @@ function safeLocale(tag: string | undefined): string {
     }
 }
 
-/** 表示言語（日付・文言）と数値の地域（数値・金額）。draw() のたびに取り直す。 */
+/** UI language (dates, text) and number-format region (numbers, amounts). Read again on every draw(). */
 function currentLocales(): { ui: string; format: string } {
     const ui = safeLocale(i18n.getLocale?.() || document.documentElement.lang || 'en');
     const format = safeLocale(i18n.getFormatLocale?.() || ui);
@@ -85,15 +85,15 @@ function dateFormat(locale: string, options: Intl.DateTimeFormatOptions): Intl.D
     return fmt;
 }
 
-/** 言語に合わせた書き方（表示だけ。金額の計算には使わない）。 */
+/** Locale-aware formatting (display only, never used for money calculations). */
 interface Format {
     money(amount: number, currency: Currency): string;
     integer(value: number): string;
-    payDate(payDate: string): string; // 'MM-DD' → '6/30'、'30.6.' など
+    payDate(payDate: string): string; // 'MM-DD' → '6/30', '30.6.', etc.
     monthShort(month: number): string;
     monthLong(month: number): string;
-    yearLabel(year: number): string; // 区切りなしの数字
-    yearName(year: number): string; // '2026年'、'2026'
+    yearLabel(year: number): string; // digits without grouping
+    yearName(year: number): string; // '2026', with a suffix in some locales such as ja
     currencyName(currency: Currency): string;
     join(items: string[]): string;
 }
@@ -116,7 +116,7 @@ function makeFormat(): Format {
                 minimumFractionDigits: digits,
                 maximumFractionDigits: digits,
             });
-            // 小数の文字列を渡す（Intl が文字列のまま整えるので浮動小数点の誤差が出ない）
+            // Pass a decimal string: Intl formats it exactly, with no floating-point error
             return fmt.format(amountDecimal(amount, currency) as Intl.StringNumericLiteral);
         },
         integer: (value) => numberFormat(format).format(value),
@@ -138,11 +138,11 @@ function makeFormat(): Format {
     };
 }
 
-/** 棒グラフの 1 本（月別・年別で共通）。 */
+/** One bar of a chart (shared by the monthly and yearly charts). */
 interface Bar extends Breakdown {
-    label: string; // 棒の下のラベル（'6月' / '2026'）
-    name: string; // 読み上げ用（'6月' / '2026年'）
-    key: 'month' | 'year'; // 区間の data-<key> に value を入れる
+    label: string; // label under the bar ('Jun' / '2026')
+    name: string; // for screen readers ('June' / '2026')
+    key: 'month' | 'year'; // value goes into the segment's data-<key>
     value: string;
 }
 
@@ -191,7 +191,7 @@ function button(text: string, action: string, className?: string): HTMLButtonEle
     return node;
 }
 
-/** 通貨の select（選択肢は通貨の表示名、値は通貨コード）。 */
+/** A currency select (options show the currency name, values are currency codes). */
 function currencySelect(
     fmt: Format,
     name: string,
@@ -206,19 +206,19 @@ function currencySelect(
     return select;
 }
 
-/** 通貨ごとの合計をつなぐ（空なら 0 円）。 */
+/** Joins the per-currency totals (0 yen when empty). */
 function formatTotals(fmt: Format, totals: CurrencyBreakdown[]): string {
     return totals.length === 0
         ? fmt.money(0, 'JPY')
         : fmt.join(totals.map((t) => fmt.money(t.total, t.currency)));
 }
 
-/** 受取日の一覧表示（'3/31、9/30' など）。 */
+/** Pay dates for the list ('3/31, 9/30', etc.). */
 function formatPayDates(fmt: Format, payments: Payment[]): string {
     return fmt.join(payments.map(({ payDate }) => fmt.payDate(payDate)));
 }
 
-/** 一覧・確認文で使う銘柄の表示（'7203 トヨタ自動車'、name が空なら ticker だけ）。 */
+/** The stock label used in the list and confirmations ('7203 Toyota Motor', or just the ticker without a name). */
 function recordLabel(record: DividendRecord): string {
     return record.name === '' ? record.ticker : `${record.ticker} ${record.name}`;
 }
@@ -236,7 +236,7 @@ function parseMembers(body: unknown): Map<number, string> {
     return map;
 }
 
-/** 応答の code を翻訳する。訳が無ければ fallbackKey の訳（応答の英語の error は出さない）。 */
+/** Translates the response code, or uses fallbackKey (the English error text is never shown). */
 async function errorMessage(res: Response, fallbackKey: string): Promise<string> {
     try {
         const body = (await res.json()) as { code?: unknown; params?: unknown };
@@ -274,7 +274,7 @@ export async function render(
     let loaded = false;
 
     const memberName = (id: number): string => members.get(id) ?? tr('common.unknown_user');
-    /** 保有者の色の番号。家族一覧の取得順で 1〜OWNER_COLORS、それ以外は OWNER_COLORS + 1（other）。 */
+    /** Holder colour slot: 1 to OWNER_COLORS by family-list order, otherwise OWNER_COLORS + 1 (other). */
     const colorSlot = (ownerId: number): number => {
         const index = [...members.keys()].indexOf(ownerId);
         return index >= 0 && index < OWNER_COLORS ? index + 1 : OWNER_COLORS + 1;
@@ -308,8 +308,8 @@ export async function render(
         toolbar.appendChild(el('h1', 'page-toolbar__title', tr('title')));
         const body = el('div', 'app-page__body');
         body.append(...sections);
-        // 開いているダイアログは残す（言語の切り替えで書き直しても閉じないように）。
-        // replaceChildren で外すと close が来ないまま dialog が残り、次のダイアログが開けなくなる
+        // Keep an open dialog (so a language change does not close it).
+        // Removing it with replaceChildren fires no close event, so `dialog` would stay set and no dialog could open again
         for (const child of [...container.childNodes]) {
             if (child !== dialog) child.remove();
         }
@@ -426,7 +426,7 @@ export async function render(
         return section;
     };
 
-    /** 保有者ごとの色で積み上げた棒グラフ・ツールチップ・凡例（月別・年別で共通）。 */
+    /** A bar chart stacked by holder colour, with tooltip and legend (shared by both charts). */
     const buildBars = (bars: Bar[], chartLabel: string, currency: Currency): HTMLElement => {
         const money = (amount: number): string => fmt.money(amount, currency);
         const max = Math.max(...bars.map((b) => b.total));
@@ -451,7 +451,7 @@ export async function render(
             );
             const track = el('div', 'dt-chart__track');
             const bar = el('div', 'dt-chart__bar');
-            // 表示用の比率。金額の計算には使わない
+            // Display ratio only, never used for money calculations
             bar.style.height = `${max > 0 ? (total / max) * 100 : 0}%`;
             for (const o of sorted) {
                 const segment = el('div', `dt-chart__segment ${colorClass(o.ownerId)}`);
@@ -492,7 +492,7 @@ export async function render(
         const section = el('section', 'page-section');
         const title = el('h2', undefined, tr('chart.monthly'));
         if (choices.length >= 2) {
-            // 通貨の選択は月別・年別の両方に効く
+            // The currency choice applies to both the monthly and yearly charts
             const heading = el('div', 'dt-heading');
             const field = labeled(
                 tr('chart.currency'),
@@ -541,7 +541,7 @@ export async function render(
     const draw = (): void => {
         fmt = makeFormat();
         const visible = filterByOwner(records, filter);
-        // 候補は保有者フィルタに関係なく全記録から（フィルタで候補が変わらないように）
+        // Choices come from all records regardless of the holder filter (so filtering does not change them)
         const choices = usedCurrencies(records, yearlyTotals);
         const first = choices[0];
         if (first !== undefined && !choices.includes(chartCurrency)) chartCurrency = first;
@@ -553,9 +553,9 @@ export async function render(
         );
     };
 
-    // ---- ダイアログ ----
+    // ---- Dialog ----
 
-    /** 月・日の select（value は 2 桁、先頭は未選択の空の選択肢）。 */
+    /** A month or day select (two-digit values, starting with an empty option). */
     const dateSelect = (name: string, ariaKey: string, selected: string): HTMLSelectElement => {
         const isMonth = name === 'payMonth';
         const select = el('select');
@@ -591,7 +591,7 @@ export async function render(
         return row;
     };
 
-    /** 行の数に合わせて「削除」「受取日を追加」の disabled を切り替える。 */
+    /** Enables or disables Remove and Add pay date for the number of rows. */
     const refreshPaymentButtons = (form: HTMLFormElement): void => {
         const rows = form.querySelectorAll('.dt-payment');
         for (const remove of form.querySelectorAll<HTMLButtonElement>(
@@ -691,7 +691,7 @@ export async function render(
         const months = data.getAll('payMonth').map(String);
         const days = data.getAll('payDay').map(String);
         const perShares = data.getAll('perShare').map(String);
-        // 月か日が空なら空文字（validateInput が pay_date_invalid を返す）
+        // Empty when the month or day is missing (validateInput then returns pay_date_invalid)
         const dates = months.map((month, i) => {
             const day = days[i] ?? '';
             return month !== '' && day !== '' ? `${month}-${day}` : '';
@@ -835,7 +835,7 @@ export async function render(
         if (record && canEdit(record)) openDialog(record);
     };
 
-    // 表示言語が変わったら書き直す（開いているダイアログはそのまま）
+    // Redraw when the display language changes (an open dialog stays as it is)
     window.addEventListener(
         'locale-changed',
         () => {
@@ -993,7 +993,7 @@ export async function render(
     container.addEventListener(
         'pointerout',
         (e) => {
-            // タッチは指を離すと pointerout が来るので、次に別の場所を触るまで出しておく
+            // Touch sends pointerout on release, so keep the tooltip until something else is touched
             if (e.pointerType === 'touch') return;
             if (e.target instanceof Element && e.target.closest('.dt-chart__segment')) {
                 hideTooltip();

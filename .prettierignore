@@ -1,12 +1,12 @@
-# 生成物・依存関係
+# Build output and dependencies
 node_modules/
 modules/
 dist/
 package-lock.json
 
-# ドキュメント（既存の文章を勝手に整形しないため対象外）
+# Documents (left as written, not reformatted)
 *.md
 docs/
 
-# 個人用・非共有
+# Personal, not shared
 scripts/

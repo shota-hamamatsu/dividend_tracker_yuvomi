@@ -26,7 +26,7 @@ function compareText(a, b) {
 function isCurrency(value) {
 	return typeof value === "string" && CURRENCIES.includes(value);
 }
-/** 1株配当の小数の桁数。 */
+/** Number of decimal places for the dividend per share. */
 function perShareDecimals(currency) {
 	return currency === "JPY" ? 2 : 4;
 }
@@ -42,7 +42,7 @@ function parsePerShare(text, currency) {
 	const units = BigInt(match[1] ?? "0") * 10n ** BigInt(decimals) + BigInt((match[2] ?? "").padEnd(decimals, "0"));
 	return units <= BigInt(MAX_PER_SHARE_CENTS) ? Number(units) : null;
 }
-/** 受取額。amount の単位（JPY は 1 円、JPY 以外は 1/100）未満は切り捨て。 */
+/** Amount received, floored to the amount unit (JPY: 1 yen, others: 1/100). */
 function calcAmount(shares, perShareCents) {
 	return Number(BigInt(shares) * BigInt(perShareCents) / 100n);
 }
@@ -55,7 +55,7 @@ function isValidDate(text) {
 	const date = new Date(Date.UTC(year, month - 1, day));
 	return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
 }
-/** 'MM-DD' がうるう年（2000 年）に実在する月日か。 */
+/** Whether 'MM-DD' is a real day in a leap year (2000). */
 function isValidPayDate(text) {
 	return /^\d{2}-\d{2}$/.test(text) && isValidDate(`2000-${text}`);
 }
@@ -93,8 +93,8 @@ function isValidPayment(value, shares, isDate) {
 	return typeof p["payDate"] === "string" && isDate(p["payDate"]) && isValidPerShareCents(perShareCents) && p["amount"] === calcAmount(shares, perShareCents);
 }
 /**
-* 記録の形を調べる（通貨は調べない）。
-* 日付の形式（v0.4 以降は MM-DD、v0.3 は YYYY-MM-DD）だけ差し替えられる。
+* Checks the shape of a record (not its currency).
+* Only the date format can vary (MM-DD from v0.4, YYYY-MM-DD in v0.3).
 */
 function isRecordShape(value, isDate) {
 	if (typeof value !== "object" || value === null) return false;
@@ -128,7 +128,7 @@ function toBreakdown(byOwner) {
 		owners
 	};
 }
-/** 記録の 1 年分の受取額の合計と保有者ごとの内訳を、通貨ごとに（通貨の順、0 の通貨は除く）。 */
+/** One year of amounts with a breakdown by holder, per currency (in currency order, 0 omitted). */
 function annualTotals(records) {
 	const result = [];
 	for (const currency of CURRENCIES) {
@@ -148,7 +148,7 @@ function annualTotals(records) {
 function isValidYear(value) {
 	return typeof value === "number" && Number.isInteger(value) && value >= 2e3 && value <= 2100;
 }
-/** owners が ownerId の厳密な昇順・各 total が 1 以上で、total がその和なら true。 */
+/** True when owners are strictly ascending by ownerId, each total is 1 or more, and total is their sum. */
 function isValidBreakdown(owners, total) {
 	if (!Array.isArray(owners)) return false;
 	let sum = 0;
@@ -183,13 +183,13 @@ function isValidYearlyTotal(value) {
 	}
 	return true;
 }
-/** 'YYYY' を MIN_YEAR〜MAX_YEAR の整数にする。それ以外は null。 */
+/** Parses 'YYYY' into an integer from MIN_YEAR to MAX_YEAR, otherwise null. */
 function parseYear(text) {
 	if (!/^\d{4}$/.test(text)) return null;
 	const year = Number(text);
 	return isValidYear(year) ? year : null;
 }
-/** 1〜12 月それぞれの、その通貨の受取額の合計（記録の 1 年分）と、保有者ごとの内訳。 */
+/** For each month 1 to 12, the total in that currency (one year of records) with a breakdown by holder. */
 function monthlyTotals(records, currency) {
 	const byOwner = Array.from({ length: 12 }, () => /* @__PURE__ */ new Map());
 	for (const record of records) {
@@ -206,8 +206,8 @@ function monthlyTotals(records, currency) {
 	}));
 }
 /**
-* 年別グラフ用。endYear までの CHART_YEARS 年分を年の昇順で返す。登録の無い年・通貨は 0。
-* ownerId が null でなければ、その保有者の分だけにする。
+* For the yearly chart: CHART_YEARS years up to endYear, ascending. Years or currencies not registered are 0.
+* When ownerId is not null, only that holder is counted.
 */
 function yearlyChart(totals, endYear, ownerId, currency) {
 	return Array.from({ length: 12 }, (_, i) => {
@@ -220,28 +220,28 @@ function yearlyChart(totals, endYear, ownerId, currency) {
 		};
 	});
 }
-/** 記録と年別合計に出てくる通貨（重複なし、通貨の順）。 */
+/** Currencies used in the records and yearly totals (no duplicates, in currency order). */
 function usedCurrencies(records, totals) {
 	const used = new Set(records.map((r) => r.currency));
 	for (const t of totals) for (const c of t.totals) used.add(c.currency);
 	return CURRENCIES.filter((c) => used.has(c));
 }
-/** 一覧表示用。ticker → ownerId → id の昇順。 */
+/** For the list: ascending by ticker, then ownerId, then id. */
 function sortForList(records) {
 	return [...records].sort((a, b) => compareText(a.ticker, b.ticker) || a.ownerId - b.ownerId || compareText(a.id, b.id));
 }
-/** 0 以上の整数を、小数 decimals 桁の固定小数として整数部と小数部の文字列に分ける。 */
+/** Splits a non-negative integer, read as a fixed-point number with `decimals` places, into whole and fraction strings. */
 function splitFixed(value, decimals) {
 	const digits = String(value).padStart(decimals + 1, "0");
 	return [digits.slice(0, digits.length - decimals), digits.slice(digits.length - decimals)];
 }
-/** 金額の小数の桁数（JPY は 0、それ以外は 2）。 */
+/** Decimal places of an amount (JPY: 0, others: 2). */
 function amountDecimals(currency) {
 	return currency === "JPY" ? 0 : 2;
 }
 /**
-* 金額を小数の文字列にする（1234 JPY → '1234'、123456 USD → '1234.56'）。
-* 3 桁区切り・通貨記号は付けない（表示は画面が Intl で整える）。
+* Writes an amount as a decimal string (1234 JPY → '1234', 123456 USD → '1234.56').
+* No grouping or currency symbol; the UI formats it with Intl.
 */
 function amountDecimal(amount, currency) {
 	const decimals = amountDecimals(currency);
@@ -249,7 +249,7 @@ function amountDecimal(amount, currency) {
 	const [whole, fraction] = splitFixed(amount, decimals);
 	return `${whole}.${fraction}`;
 }
-/** 1株配当を入力欄用の文字列に戻す（3750 JPY → '37.5'、2475 USD → '0.2475'）。 */
+/** Turns a dividend per share back into input text (3750 JPY → '37.5', 2475 USD → '0.2475'). */
 function perShareInputText(perShareCents, currency) {
 	const [whole, fraction] = splitFixed(perShareCents, perShareDecimals(currency));
 	const trimmed = fraction.replace(/0+$/, "");
@@ -260,16 +260,16 @@ var ENDPOINT = "/api/extensions/dividend-tracker/records";
 var YEARLY_ENDPOINT = "/api/extensions/dividend-tracker/yearly-totals";
 var KEY_PREFIX = "extensions.dividend-tracker.";
 var OWNER_COLORS = 8;
-/** モジュールの文言（locales/<言語>.json のキー）。 */
+/** A module string (a key in locales/<locale>.json). */
 function tr(key, params) {
 	return i18n.t(KEY_PREFIX + key, params);
 }
-/** 訳があれば訳、無ければ（t がキーのまま返したら）fallback のキーの訳。 */
+/** The translation, or the fallback key's translation when there is none (t returned the key). */
 function trOr(key, fallbackKey, params) {
 	const text = tr(key, params);
 	return text === KEY_PREFIX + key ? tr(fallbackKey) : text;
 }
-/** Intl に渡せる言語タグか。渡せなければ 'en'。 */
+/** The tag if Intl accepts it, otherwise 'en'. */
 function safeLocale(tag) {
 	if (!tag) return "en";
 	try {
@@ -278,7 +278,7 @@ function safeLocale(tag) {
 		return "en";
 	}
 }
-/** 表示言語（日付・文言）と数値の地域（数値・金額）。draw() のたびに取り直す。 */
+/** UI language (dates, text) and number-format region (numbers, amounts). Read again on every draw(). */
 function currentLocales() {
 	const ui = safeLocale(i18n.getLocale?.() || document.documentElement.lang || "en");
 	return {
@@ -378,22 +378,22 @@ function button(text, action, className) {
 	node.dataset["action"] = action;
 	return node;
 }
-/** 通貨の select（選択肢は通貨の表示名、値は通貨コード）。 */
+/** A currency select (options show the currency name, values are currency codes). */
 function currencySelect(fmt, name, choices, selected) {
 	const select = el("select");
 	select.name = name;
 	for (const currency of choices) select.appendChild(option(currency, fmt.currencyName(currency), currency === selected));
 	return select;
 }
-/** 通貨ごとの合計をつなぐ（空なら 0 円）。 */
+/** Joins the per-currency totals (0 yen when empty). */
 function formatTotals(fmt, totals) {
 	return totals.length === 0 ? fmt.money(0, "JPY") : fmt.join(totals.map((t) => fmt.money(t.total, t.currency)));
 }
-/** 受取日の一覧表示（'3/31、9/30' など）。 */
+/** Pay dates for the list ('3/31, 9/30', etc.). */
 function formatPayDates(fmt, payments) {
 	return fmt.join(payments.map(({ payDate }) => fmt.payDate(payDate)));
 }
-/** 一覧・確認文で使う銘柄の表示（'7203 トヨタ自動車'、name が空なら ticker だけ）。 */
+/** The stock label used in the list and confirmations ('7203 Toyota Motor', or just the ticker without a name). */
 function recordLabel(record) {
 	return record.name === "" ? record.ticker : `${record.ticker} ${record.name}`;
 }
@@ -407,7 +407,7 @@ function parseMembers(body) {
 	}
 	return map;
 }
-/** 応答の code を翻訳する。訳が無ければ fallbackKey の訳（応答の英語の error は出さない）。 */
+/** Translates the response code, or uses fallbackKey (the English error text is never shown). */
 async function errorMessage(res, fallbackKey) {
 	try {
 		const body = await res.json();
@@ -442,7 +442,7 @@ async function render(container, context) {
 	let fmt = makeFormat();
 	let loaded = false;
 	const memberName = (id) => members.get(id) ?? tr("common.unknown_user");
-	/** 保有者の色の番号。家族一覧の取得順で 1〜OWNER_COLORS、それ以外は OWNER_COLORS + 1（other）。 */
+	/** Holder colour slot: 1 to OWNER_COLORS by family-list order, otherwise OWNER_COLORS + 1 (other). */
 	const colorSlot = (ownerId) => {
 		const index = [...members.keys()].indexOf(ownerId);
 		return index >= 0 && index < OWNER_COLORS ? index + 1 : 9;
@@ -557,7 +557,7 @@ async function render(container, context) {
 		section.appendChild(table);
 		return section;
 	};
-	/** 保有者ごとの色で積み上げた棒グラフ・ツールチップ・凡例（月別・年別で共通）。 */
+	/** A bar chart stacked by holder colour, with tooltip and legend (shared by both charts). */
 	const buildBars = (bars, chartLabel, currency) => {
 		const money = (amount) => fmt.money(amount, currency);
 		const max = Math.max(...bars.map((b) => b.total));
@@ -664,7 +664,7 @@ async function render(container, context) {
 		if (first !== void 0 && !choices.includes(chartCurrency)) chartCurrency = first;
 		shell(buildList(visible), buildTotals(visible), buildMonthly(visible, choices), buildYearly());
 	};
-	/** 月・日の select（value は 2 桁、先頭は未選択の空の選択肢）。 */
+	/** A month or day select (two-digit values, starting with an empty option). */
 	const dateSelect = (name, ariaKey, selected) => {
 		const isMonth = name === "payMonth";
 		const select = el("select");
@@ -689,7 +689,7 @@ async function render(container, context) {
 		row.append(labeled(tr("field.pay_date"), payday), labeled(tr("field.per_share"), perShareInput), button(tr("dialog.remove_payment"), "remove-payment", "dt-button--secondary"));
 		return row;
 	};
-	/** 行の数に合わせて「削除」「受取日を追加」の disabled を切り替える。 */
+	/** Enables or disables Remove and Add pay date for the number of rows. */
 	const refreshPaymentButtons = (form) => {
 		const rows = form.querySelectorAll(".dt-payment");
 		for (const remove of form.querySelectorAll("[data-action=\"remove-payment\"]")) remove.disabled = rows.length <= 1;
